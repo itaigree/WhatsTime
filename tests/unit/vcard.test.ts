@@ -138,7 +138,7 @@ describe('parseVCards: real-world exports', () => {
   });
 
   it('builds the name from a quoted-printable N when FN is missing', () => {
-    const text = ANDROID_EXPORT.replace(/FN;[^]*?=95=D7=93=D7=9E=D7=AA\r\n/, '');
+    const text = ANDROID_EXPORT.replace(/FN;[\s\S]*?=95=D7=93=D7=9E=D7=AA\r\n/, '');
     expect(parseVCards(text)[0]?.name).toBe('רחל לוי');
   });
 

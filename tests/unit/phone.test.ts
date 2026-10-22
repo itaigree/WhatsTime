@@ -172,6 +172,13 @@ describe('normalizePhone: rejections', () => {
     expect(normalizePhone(input, 'IL')).toEqual({ ok: false, error });
   });
 
+  it('handles huge pasted input quickly', () => {
+    const started = performance.now();
+    expect(normalizePhone('1 '.repeat(50_000), 'US')).toEqual({ ok: false, error: ERR.tooLong });
+    expect(normalizePhone(`${'1 '.repeat(50_000)}word`, 'US')).toEqual({ ok: false, error: ERR.letters });
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
   it('rejects an absurdly long number without throwing', () => {
     expect(normalizePhone('1'.repeat(400), 'US')).toEqual({ ok: false, error: ERR.tooLong });
     expect(normalizePhone(`+${'1'.repeat(400)}`, 'US')).toEqual({ ok: false, error: ERR.tooLong });

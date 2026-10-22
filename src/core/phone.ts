@@ -44,7 +44,7 @@ const NON_ASCII_DIGIT = /[\u0660-\u0669\u06F0-\u06F9\u0966-\u096F]/g;
 const INVISIBLE = /\p{Cf}/gu;
 /** Whitespace (incl. NBSP and thin spaces), dashes, dots, slashes and brackets. */
 const SEPARATORS = /[\s.\-/\\()[\]~\u2010-\u2015\u2212\u30FC]/g;
-const EXTENSION = /^[^\p{L}]*\d[^\p{L}]*(?:ext(?:ension|n)?|x)\.?\s*:?\s*\d+\s*$/iu;
+const EXTENSION = /\d[^\d\p{L}]*(?:ext(?:ension|n)?\.?|x)\s*:?\s*\d+\s*$/iu;
 
 function toAsciiDigits(value: string): string {
   return value.replace(NON_ASCII_DIGIT, (ch) => {
@@ -52,6 +52,12 @@ function toAsciiDigits(value: string): string {
     const zero = DIGIT_ZEROS.find((z) => cp >= z && cp <= z + 9);
     return zero === undefined ? ch : String(cp - zero);
   });
+}
+
+/** A number followed by 'ext 12' / 'x12' and no other letters. */
+function isExtension(text: string): boolean {
+  const match = EXTENSION.exec(text);
+  return match !== null && !/\p{L}/u.test(text.slice(0, match.index));
 }
 
 /** Strip decoration and return '+digits' / 'digits', or an error for disallowed content. */
@@ -62,7 +68,7 @@ function compactInput(input: string): { ok: true; value: string } | { ok: false;
     .replace(/^tel:(?:\/\/)?/i, '');
   if (!text.trim()) return { ok: false, error: ERRORS.empty };
   if (/[*#]/.test(text)) return { ok: false, error: ERRORS.serviceCode };
-  if (/[,;]/.test(text) || EXTENSION.test(text)) return { ok: false, error: ERRORS.extension };
+  if (/[,;]/.test(text) || isExtension(text)) return { ok: false, error: ERRORS.extension };
   if (/\p{L}/u.test(text)) return { ok: false, error: ERRORS.letters };
   const value = text.replace(SEPARATORS, '');
   if (/^\+?\d+$/.test(value)) return { ok: true, value };

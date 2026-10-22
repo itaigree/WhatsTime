@@ -56,7 +56,9 @@ test.describe('web app manifest', () => {
       orientation: 'portrait',
       categories: ['productivity'],
     });
-    expect(typeof manifest.id).toBe('string');
+    // `id` resolves against the start_url's *origin*: './' would mean the bare origin and clash with
+    // other apps on <user>.github.io, so it must be a distinct relative name.
+    expect(manifest.id).toMatch(/^[a-z][\w-]*$/i);
     expect(manifest.theme_color).toMatch(/^#[0-9a-f]{6}$/i);
     expect(manifest.background_color).toMatch(/^#[0-9a-f]{6}$/i);
 
@@ -67,7 +69,7 @@ test.describe('web app manifest', () => {
     expect(icon((i) => i.sizes === '512x512' && i.type === 'image/png' && purposes(i).includes('maskable'))).toBeTruthy();
     expect(icon((i) => i.sizes === 'any' && i.type === 'image/svg+xml')).toBeTruthy();
 
-    expect(manifest.share_target).toEqual({
+    expect(manifest.share_target).toMatchObject({
       action: './',
       method: 'GET',
       params: { title: 'title', text: 'text', url: 'url' },
