@@ -1,6 +1,7 @@
 /** '#/settings' — defaults, the scheduled list, how it works and privacy. */
 
 import type { Settings } from '../../core/types';
+import { confirmDialog } from '../components/confirm';
 import { field, selectControl } from '../components/field';
 import type { AppContext, View } from '../context';
 import { h, uid } from '../dom';
@@ -47,10 +48,13 @@ export function settingsView(ctx: AppContext): View {
     {
       type: 'button',
       class: 'btn btn-secondary btn-danger',
-      onClick: () => {
-        const ok = window.confirm(
-          'Clear the scheduled list on this device?\n\nEvents you already added to your calendar stay there.',
-        );
+      onClick: async () => {
+        const ok = await confirmDialog({
+          title: 'Clear the scheduled list?',
+          body: 'This removes every reminder saved on this device. Events you already added to your calendar stay there.',
+          confirmLabel: 'Clear list',
+          danger: true,
+        });
         if (!ok) return;
         for (const msg of ctx.store.listHistory()) ctx.store.deleteFromHistory(msg.id);
         updateCount();

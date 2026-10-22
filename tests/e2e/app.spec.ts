@@ -294,16 +294,18 @@ test('scheduled list: shows the item, Reuse pre-fills the form, Delete removes i
   await expect(timeInput(page)).toHaveValue('18:45');
 
   await page.getByRole('link', { name: 'Scheduled' }).click();
-  page.once('dialog', (dialog) => {
-    expect(dialog.type()).toBe('confirm');
-    expect(dialog.message()).toContain('does not delete the event from your calendar');
-    void dialog.accept();
-  });
-  await page
+  const deleteButton = page
     .getByRole('listitem')
     .filter({ hasText: 'Water the plants' })
-    .getByRole('button', { name: 'Delete' })
-    .click();
+    .getByRole('button', { name: 'Delete' });
+  await deleteButton.click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toContainText('removed from this list only');
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('listitem')).toHaveCount(1);
+  await deleteButton.click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete' }).click();
   await expect(page.getByRole('listitem')).toHaveCount(0);
   await expect(page.getByText('Nothing scheduled yet')).toBeVisible();
 });

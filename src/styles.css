@@ -1,7 +1,7 @@
 /* WhatsTime: mobile-first, single column, light + dark. */
 
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   --bg: #f1f5f3;
   --surface: #ffffff;
   --surface-2: #f4f7f6;
@@ -16,6 +16,7 @@
   --on-accent: #ffffff;
   --danger: #b3261e;
   --danger-soft: #fcecea;
+  --on-danger: #ffffff;
   --warning-ink: #6b4500;
   --warning-soft: #fff4dc;
   --focus: #0a7f62;
@@ -44,8 +45,9 @@
   text-size-adjust: 100%;
 }
 
+/* Dark tokens apply with the OS setting unless the page is explicitly light, and always when explicitly dark. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --bg: #0c1311;
     --surface: #141e1b;
     --surface-2: #1a2623;
@@ -60,6 +62,7 @@
     --on-accent: #02241a;
     --danger: #ffb4ab;
     --danger-soft: #3a1714;
+    --on-danger: #3a0905;
     --warning-ink: #ffd88a;
     --warning-soft: #33280e;
     --focus: #2bd4a4;
@@ -70,7 +73,37 @@
     --brand-bubble: #121b18;
     --brand-hand: #2bd4a4;
     --shadow: none;
+    color-scheme: dark;
   }
+}
+
+:root[data-theme='dark'] {
+  --bg: #0c1311;
+  --surface: #141e1b;
+  --surface-2: #1a2623;
+  --text: #e3ebe8;
+  --muted: #9cafa8;
+  --border: #24332e;
+  --border-strong: #3b4d47;
+  --accent: #2bd4a4;
+  --accent-hover: #63e1bd;
+  --accent-soft: #11372d;
+  --accent-ink: #7ce6c6;
+  --on-accent: #02241a;
+  --danger: #ffb4ab;
+  --danger-soft: #3a1714;
+  --on-danger: #3a0905;
+  --warning-ink: #ffd88a;
+  --warning-soft: #33280e;
+  --focus: #2bd4a4;
+  --appbar: #121b18;
+  --on-appbar: #e3ebe8;
+  --appbar-indicator: #2bd4a4;
+  --brand-tile: #2bd4a4;
+  --brand-bubble: #121b18;
+  --brand-hand: #2bd4a4;
+  --shadow: none;
+  color-scheme: dark;
 }
 
 *,
@@ -1326,4 +1359,55 @@ label.radio-row,
     animation: none !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ---------- Confirm dialog ---------- */
+
+.dialog {
+  width: min(400px, calc(100vw - 2 * var(--gutter)));
+  padding: 0;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 25%);
+}
+
+.dialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+
+.dialog-inner {
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+}
+
+.dialog-title {
+  margin: 0;
+  font-size: 1.125rem;
+  line-height: 1.35;
+  text-wrap: balance;
+}
+
+.dialog-body {
+  margin: 0;
+  color: var(--muted);
+}
+
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.btn-danger-solid {
+  background: var(--danger);
+  color: var(--on-danger);
+}
+
+.btn-danger-solid:hover {
+  filter: brightness(1.08);
 }

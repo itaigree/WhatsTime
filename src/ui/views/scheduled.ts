@@ -4,6 +4,7 @@ import { messageSnippet } from '../../core/event';
 import { describeRecurrence, occurrences } from '../../core/recurrence';
 import { zonedTimeToUtc } from '../../core/timezone';
 import type { LocalDateTime, ScheduledMessage } from '../../core/types';
+import { confirmDialog } from '../components/confirm';
 import type { AppContext, View } from '../context';
 import { h, uid } from '../dom';
 import { dayTimeLabel, recipientLabel } from '../format';
@@ -49,10 +50,13 @@ export function scheduledView(ctx: AppContext): View {
   const content = h('div', null);
   const element = h('div', { class: 'view' }, heading, content);
 
-  function deleteItem(msg: ScheduledMessage): void {
-    const ok = window.confirm(
-      `Delete this reminder for ${recipientLabel(msg.recipient)} from the list?\n\nThis does not delete the event from your calendar.`,
-    );
+  async function deleteItem(msg: ScheduledMessage): Promise<void> {
+    const ok = await confirmDialog({
+      title: `Delete the reminder for ${recipientLabel(msg.recipient)}?`,
+      body: 'It is removed from this list only. If you added it to your calendar, delete it there too.',
+      confirmLabel: 'Delete',
+      danger: true,
+    });
     if (!ok) return;
     ctx.store.deleteFromHistory(msg.id);
     render();
@@ -107,7 +111,7 @@ export function scheduledView(ctx: AppContext): View {
             type: 'button',
             class: 'btn btn-text btn-small btn-danger',
             'aria-describedby': titleId,
-            onClick: () => deleteItem(msg),
+            onClick: () => void deleteItem(msg),
           },
           icon('trash', 18),
           'Delete',
