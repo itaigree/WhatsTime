@@ -746,3 +746,44 @@ describe('clearing data', () => {
     }
   });
 });
+
+describe('draft pending recipient', () => {
+  function memory(): KeyValueStore {
+    const data = new Map<string, string>();
+    return { getItem: (k) => data.get(k) ?? null, setItem: (k, v) => void data.set(k, v), removeItem: (k) => void data.delete(k) };
+  }
+
+  it('round-trips an unresolved contact with the rest of the draft', () => {
+    const store = createStore(memory());
+    store.saveDraft({ message: 'Hi', pendingRecipient: { name: 'Mom', phones: ['050-1234567', '03-5551234'], source: 'contact' } });
+    expect(store.loadDraft()).toEqual({
+      message: 'Hi',
+      pendingRecipient: { name: 'Mom', phones: ['050-1234567', '03-5551234'], source: 'contact' },
+    });
+  });
+
+  it('keeps a draft that only has a pending recipient', () => {
+    const store = createStore(memory());
+    store.saveDraft({ pendingRecipient: { name: '', phones: ['0501234567'], source: 'typed' } });
+    expect(store.loadDraft()).toEqual({ pendingRecipient: { name: '', phones: ['0501234567'], source: 'typed' } });
+  });
+
+  it('drops malformed pending recipients', () => {
+    const backend = memory();
+    const store = createStore(backend);
+    const bad = [
+      { name: 'x', phones: [], source: 'contact' },
+      { name: 'x', phones: ['1'], source: 'other' },
+      { name: 3, phones: ['1'], source: 'typed' },
+      { name: 'x', phones: 'abc', source: 'typed' },
+      { name: 'x', phones: Array.from({ length: 21 }, () => '1'), source: 'typed' },
+      null,
+    ];
+    for (const pendingRecipient of bad) {
+      backend.setItem('whatstime:v1:draft', JSON.stringify({ message: 'm', pendingRecipient }));
+      expect(store.loadDraft()).toEqual({ message: 'm' });
+    }
+    backend.setItem('whatstime:v1:draft', JSON.stringify({ message: 'm', pendingRecipient: { name: 'x', phones: ['1', 2, '3'], source: 'typed' } }));
+    expect(store.loadDraft()?.pendingRecipient?.phones).toEqual(['1', '3']);
+  });
+});

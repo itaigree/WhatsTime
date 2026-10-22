@@ -102,7 +102,7 @@ function wallTimeWarning(msg: ScheduledMessage): string | null {
   const { time } = msg.start;
   const issue = wallTimeIssue(firstStart(msg), msg.timeZone);
   if (issue?.kind === 'gap') {
-    return `${time} doesn't exist on that day because the clocks go forward. The reminder will be at ${issue.actual}.`;
+    return `${time} doesn't exist on that day because the clocks go forward; ${issue.actual} is used instead.`;
   }
   if (issue?.kind === 'repeated') {
     return `${time} happens twice on that day because the clocks go back. The first one (summer time) is used.`;

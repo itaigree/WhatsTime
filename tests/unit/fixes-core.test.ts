@@ -293,12 +293,12 @@ describe('DST wall-time warnings', () => {
       warnings: [
         {
           field: 'time',
-          message: "02:30 doesn't exist on that day because the clocks go forward. The reminder will be at 03:30.",
+          message: "02:30 doesn't exist on that day because the clocks go forward; 03:30 is used instead.",
         },
       ],
     });
     expect(timeWarnings(makeMessage({ start: at('2027-03-14', '02:05'), timeZone: 'America/New_York' }))).toEqual([
-      "02:05 doesn't exist on that day because the clocks go forward. The reminder will be at 03:05.",
+      "02:05 doesn't exist on that day because the clocks go forward; 03:05 is used instead.",
     ]);
   });
 
@@ -314,7 +314,7 @@ describe('DST wall-time warnings', () => {
     // Wed 2027-03-24, weekly on Friday: the first reminder is on Friday 2027-03-26, Israel's spring-forward day.
     const msg = makeMessage({ start: at('2027-03-24', '02:15') }, { frequency: 'weekly', weekdays: ['FR'] });
     expect(timeWarnings(msg)).toEqual([
-      "02:15 doesn't exist on that day because the clocks go forward. The reminder will be at 03:15.",
+      "02:15 doesn't exist on that day because the clocks go forward; 03:15 is used instead.",
     ]);
     expect(timeWarnings(makeMessage({ start: at('2027-03-26', '02:15') }, { frequency: 'weekly', weekdays: ['SU'] })))
       .toEqual([]);

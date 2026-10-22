@@ -95,6 +95,20 @@ export interface CalendarEvent {
   dtstamp: Date;
 }
 
+/**
+ * Recipient input not yet resolved to a usable number (e.g. a picked contact whose numbers need another default
+ * country). Kept in the draft so it survives a reload or a trip to Settings.
+ */
+export interface PendingRecipient {
+  name: string;
+  /** Raw numbers as the contact or the user wrote them. */
+  phones: string[];
+  source: 'contact' | 'typed';
+}
+
+/** The unsent form. */
+export type Draft = Partial<ScheduledMessage> & { pendingRecipient?: PendingRecipient };
+
 export interface Settings {
   /** ISO 3166-1 alpha-2 region used to interpret numbers without a country code, e.g. 'IL'. */
   defaultCountry: string;

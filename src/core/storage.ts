@@ -10,9 +10,11 @@ import { MAX_REMINDER_MINUTES } from './event';
 import { MAX_COUNT, MAX_INTERVAL, WEEKDAYS, defaultRecurrence } from './recurrence';
 import { isValidTimeZone } from './timezone';
 import type {
+  Draft,
   Frequency,
   LocalDateTime,
   MonthlyMode,
+  PendingRecipient,
   Recipient,
   Recurrence,
   RecurrenceEnd,
@@ -44,8 +46,8 @@ export interface AppStore {
   forgetContact(phone: string): void;
   clearRecentContacts(): void;
   clearHistory(): void;
-  loadDraft(): Partial<ScheduledMessage> | null;
-  saveDraft(draft: Partial<ScheduledMessage>): void;
+  loadDraft(): Draft | null;
+  saveDraft(draft: Draft): void;
   clearDraft(): void;
 }
 
@@ -195,9 +197,23 @@ export function sanitizeMessage(v: unknown): ScheduledMessage | null {
   };
 }
 
-function sanitizeDraft(v: unknown): Partial<ScheduledMessage> | null {
+const MAX_PENDING_PHONES = 20;
+const MAX_PENDING_TEXT = 200;
+
+function sanitizePendingRecipient(v: unknown): PendingRecipient | undefined {
+  if (!isRecord(v) || !isString(v.name) || v.name.length > MAX_PENDING_TEXT) return undefined;
+  if (v.source !== 'contact' && v.source !== 'typed') return undefined;
+  if (!Array.isArray(v.phones)) return undefined;
+  const phones = v.phones.filter((p): p is string => isString(p) && p.length <= MAX_PENDING_TEXT);
+  if (phones.length === 0 || phones.length > MAX_PENDING_PHONES) return undefined;
+  return { name: v.name, phones, source: v.source };
+}
+
+function sanitizeDraft(v: unknown): Draft | null {
   if (!isRecord(v)) return null;
-  const draft = sanitizeFields(v, LENIENT);
+  const draft: Draft = sanitizeFields(v, LENIENT);
+  const pending = sanitizePendingRecipient(v.pendingRecipient);
+  if (pending) draft.pendingRecipient = pending;
   return Object.keys(draft).length > 0 ? draft : null;
 }
 
