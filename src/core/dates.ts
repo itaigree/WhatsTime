@@ -56,9 +56,10 @@ export function isLeapYear(year: number): boolean {
 }
 
 /** Date.UTC that does not map years 0-99 to 1900-1999. */
-function utcMs(year: number, monthIndex: number, day: number): number {
+export function utcMs(year: number, monthIndex: number, day: number, hour = 0, minute = 0, second = 0): number {
   const d = new Date(0);
   d.setUTCFullYear(year, monthIndex, day);
+  d.setUTCHours(hour, minute, second, 0);
   return d.getTime();
 }
 

@@ -3,7 +3,7 @@
  * so no tz data needs to be bundled.
  */
 
-import { formatDate, formatTime, parseDate, parseTime } from './dates';
+import { formatDate, formatTime, parseDate, parseTime, utcMs } from './dates';
 import type { LocalDateTime } from './types';
 
 const formatterCache = new Map<string, Intl.DateTimeFormat>();
@@ -27,8 +27,9 @@ function formatterFor(timeZone: string): Intl.DateTimeFormat {
   return f;
 }
 
+/** IANA zone names only; offset zones such as '+05:30' are rejected because calendars cannot use them. */
 export function isValidTimeZone(timeZone: string): boolean {
-  if (!timeZone) return false;
+  if (!timeZone || /^[+-]/.test(timeZone)) return false;
   try {
     formatterFor(timeZone);
     return true;
@@ -55,8 +56,8 @@ interface ZonedParts {
   second: number;
 }
 
-function zonedParts(timeZone: string, utcMs: number): ZonedParts {
-  const parts = formatterFor(timeZone).formatToParts(new Date(utcMs));
+function zonedParts(timeZone: string, instantMs: number): ZonedParts {
+  const parts = formatterFor(timeZone).formatToParts(new Date(instantMs));
   const get = (type: Intl.DateTimeFormatPartTypes): number =>
     Number(parts.find((p) => p.type === type)?.value ?? NaN);
   const era = parts.find((p) => p.type === 'era')?.value;
@@ -73,10 +74,10 @@ function zonedParts(timeZone: string, utcMs: number): ZonedParts {
 }
 
 /** UTC offset (local minus UTC) in minutes for the given instant. */
-export function offsetMinutesAt(timeZone: string, utcMs: number): number {
-  const p = zonedParts(timeZone, utcMs);
-  const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
-  const truncated = Math.floor(utcMs / 1000) * 1000;
+export function offsetMinutesAt(timeZone: string, instantMs: number): number {
+  const p = zonedParts(timeZone, instantMs);
+  const asUtc = utcMs(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  const truncated = Math.floor(instantMs / 1000) * 1000;
   return Math.round((asUtc - truncated) / 60_000);
 }
 
@@ -99,7 +100,7 @@ export function utcToZoned(instant: Date, timeZone: string): LocalDateTime & { s
 export function zonedTimeToUtc(local: LocalDateTime, timeZone: string, second = 0): Date {
   const { year, month, day } = parseDate(local.date);
   const { hour, minute } = parseTime(local.time);
-  const naive = Date.UTC(year, month - 1, day, hour, minute, second);
+  const naive = utcMs(year, month - 1, day, hour, minute, second);
   const before = offsetMinutesAt(timeZone, naive - 36 * 3_600_000);
   const after = offsetMinutesAt(timeZone, naive + 36 * 3_600_000);
   const candidates = [...new Set([naive - before * 60_000, naive - after * 60_000])].sort((a, b) => a - b);

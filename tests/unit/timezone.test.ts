@@ -72,3 +72,16 @@ describe('dates in years 1-99', () => {
     expect(daysInMonth(4, 2)).toBe(29);
   });
 });
+
+describe('timezone edge cases', () => {
+  it('rejects offset-style zones that calendars cannot use', () => {
+    expect(isValidTimeZone('+05:30')).toBe(false);
+    expect(isValidTimeZone('-03:00')).toBe(false);
+    expect(isValidTimeZone('Etc/GMT-3')).toBe(true);
+  });
+
+  it('converts wall times in years 1-99 without jumping to the 1900s', () => {
+    expect(zonedTimeToUtc({ date: '0026-10-22', time: '09:00' }, 'UTC').toISOString()).toBe('0026-10-22T09:00:00.000Z');
+    expect(offsetMinutesAt('UTC', Date.parse('0026-10-22T09:00:00Z'))).toBe(0);
+  });
+});

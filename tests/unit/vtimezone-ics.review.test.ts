@@ -218,6 +218,15 @@ describe('buildIcs: one-off start in the repeated hour of a fall-back', () => {
   });
 });
 
+describe('buildIcs: Israeli spring-forward gap (Friday 2026-03-27, 02:00 -> 03:00)', () => {
+  it('moves a one-off 02:15 to the 03:15 it resolves to, for every client', () => {
+    const ics = buildIcs(makeEvent({ start: { date: '2026-03-27', time: '02:15' }, reminderMinutesBefore: 30 }));
+    expect(timing(ics)).toEqual(['DTSTART;TZID=Asia/Jerusalem:20260327T031500', 'DTEND;TZID=Asia/Jerusalem:20260327T033000']);
+    expect(contentLines(ics)).toContain('TRIGGER:-PT30M');
+    expect(utcMs(parseEvent(ics).startDate)).toBe(Date.UTC(2026, 2, 27, 0, 15));
+  });
+});
+
 describe('buildIcs: end in the first pass of the repeated hour', () => {
   it.each([
     ['Asia/Jerusalem', '2026-10-25', '00:30', 60, '20261024T223000Z'],
