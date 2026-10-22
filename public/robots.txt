@@ -1,0 +1,3 @@
+# Crawlers only read robots.txt at a domain root; this takes effect if the app is hosted at one.
+User-agent: *
+Allow: /
