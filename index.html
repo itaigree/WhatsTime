@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>WhatsTime</title>
+    <meta name="description" content="Schedule WhatsApp messages as calendar reminders with a one-tap send link." />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#0a7f62" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#121b18" media="(prefers-color-scheme: dark)" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icons/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+    <script type="module" src="./src/main.ts"></script>
+  </head>
+  <body>
+    <header class="appbar">
+      <div class="appbar-inner">
+        <p class="brand"><span class="brand-mark" aria-hidden="true"></span>WhatsTime</p>
+        <nav class="tabs" aria-label="Main">
+          <a href="#/" data-tab="compose">New</a>
+          <a href="#/scheduled" data-tab="scheduled">Scheduled</a>
+          <a href="#/settings" data-tab="settings">Settings</a>
+        </nav>
+      </div>
+    </header>
+    <main id="main" class="container"></main>
+    <div class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+    <noscript><p class="container">WhatsTime needs JavaScript to run.</p></noscript>
+  </body>
+</html>
