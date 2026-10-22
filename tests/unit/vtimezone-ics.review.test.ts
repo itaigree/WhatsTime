@@ -200,6 +200,22 @@ describe('buildIcs: one-off start in the repeated hour of a fall-back', () => {
     const ics = buildIcs(makeEvent({ start: { date: '2026-10-25', time: '01:30' }, rrule: 'FREQ=DAILY;COUNT=3' }));
     expect(timing(ics)[0]).toBe('DTSTART;TZID=Asia/Jerusalem:20261025T013000');
   });
+
+  it('never gives a recurring event with a repeated start wall time a negative duration in ical.js', () => {
+    // Ends in the same first pass: a local DTEND keeps ical.js (which reads both as the later pass) consistent.
+    const samePass = buildIcs(makeEvent({ start: { date: '2026-10-25', time: '01:30' }, rrule: 'FREQ=DAILY;COUNT=3' }));
+    expect(timing(samePass)).toEqual([
+      'DTSTART;TZID=Asia/Jerusalem:20261025T013000',
+      'DTEND;TZID=Asia/Jerusalem:20261025T014500',
+    ]);
+    expect(parseEvent(samePass).duration.toSeconds()).toBe(15 * 60);
+    // Ends in the second pass: only UTC makes RFC 5545 clients see the real 75 minutes.
+    const nextPass = buildIcs(
+      makeEvent({ start: { date: '2026-10-25', time: '01:30' }, durationMinutes: 75, rrule: 'FREQ=DAILY;COUNT=3' }),
+    );
+    expect(timing(nextPass)[1]).toBe('DTEND:20261024T234500Z');
+    expect(parseEvent(nextPass).duration.toSeconds()).toBeGreaterThan(0);
+  });
 });
 
 describe('buildIcs: end in the first pass of the repeated hour', () => {

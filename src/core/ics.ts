@@ -118,20 +118,23 @@ function eventLines(event: CalendarEvent, utc: boolean): string[] {
  * DTSTART and DTEND (end = start + duration, computed in UTC). A one-off start inside a DST gap is written as the
  * wall time it resolves to, so clients cannot disagree about it. Wall times in the repeated hour of a fall-back are
  * read as the earlier instant by RFC 5545 clients and as the later one by others (ical.js), so a one-off start and
- * any end there are written in UTC instead.
+ * an end there are written in UTC instead; only an end in the same first pass as a recurring start stays local, so
+ * that clients reading both as the later pass still see the right duration.
  */
 function timingLines(event: CalendarEvent, utc: boolean): string[] {
   const { timeZone } = event;
   const start = zonedTimeToUtc(event.start, timeZone);
   const end = new Date(start.getTime() + event.durationMinutes * 60_000);
-  if (utc || (!event.rrule && wallTimeRepeats(start, timeZone))) {
-    return [`DTSTART:${toIcsUtc(start)}`, `DTEND:${toIcsUtc(end)}`];
-  }
+  const startRepeats = wallTimeRepeats(start, timeZone);
+  if (utc || (!event.rrule && startRepeats)) return [`DTSTART:${toIcsUtc(start)}`, `DTEND:${toIcsUtc(end)}`];
   const tzid = `TZID=${paramValue(timeZone)}`;
   const startLocal = event.rrule ? event.start : utcToZoned(start, timeZone);
+  const endLocal = utcToZoned(end, timeZone);
+  const endIsFirstPass = zonedTimeToUtc(endLocal, timeZone).getTime() === end.getTime();
+  const endInUtc = wallTimeRepeats(end, timeZone) && !(startRepeats && endIsFirstPass);
   return [
     `DTSTART;${tzid}:${icsLocal(startLocal)}`,
-    wallTimeRepeats(end, timeZone) ? `DTEND:${toIcsUtc(end)}` : `DTEND;${tzid}:${icsLocal(utcToZoned(end, timeZone))}`,
+    endInUtc ? `DTEND:${toIcsUtc(end)}` : `DTEND;${tzid}:${icsLocal(endLocal)}`,
   ];
 }
 
