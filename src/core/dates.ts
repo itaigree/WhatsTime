@@ -55,13 +55,20 @@ export function isLeapYear(year: number): boolean {
   return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
 }
 
+/** Date.UTC that does not map years 0-99 to 1900-1999. */
+function utcMs(year: number, monthIndex: number, day: number): number {
+  const d = new Date(0);
+  d.setUTCFullYear(year, monthIndex, day);
+  return d.getTime();
+}
+
 export function daysInMonth(year: number, month: number): number {
-  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return new Date(utcMs(year, month, 0)).getUTCDate();
 }
 
 function toUtcMs(value: string): number {
   const { year, month, day } = parseDate(value);
-  return Date.UTC(year, month - 1, day);
+  return utcMs(year, month - 1, day);
 }
 
 function fromUtcMs(ms: number): string {

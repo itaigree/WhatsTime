@@ -64,3 +64,11 @@ describe('timezone', () => {
     expect(utcToZoned(d, 'Asia/Jerusalem')).toEqual({ date: '2026-07-02', time: '00:30', second: 0 });
   });
 });
+
+describe('dates in years 1-99', () => {
+  it('does not shift them into the 1900s', () => {
+    expect(addDays('0050-02-28', 1)).toBe('0050-03-01');
+    expect(isoWeekdayIndex('0001-01-01')).toBe(0); // proleptic Gregorian Monday
+    expect(daysInMonth(4, 2)).toBe(29);
+  });
+});
