@@ -24,6 +24,7 @@ const ERRORS = {
   serviceCode: "Numbers with * or # can't be used.",
   plusPosition: 'Put the + only at the start of the number.',
   needCountryCode: 'Add the country code (start with +), or choose your country first.',
+  foreignLocal: 'This looks like a number from another country. Add its country code (start with +).',
   unknownCountryCode: 'Unknown country code. Check the digits after the +.',
   tooShort: 'This number is too short.',
   tooLong: 'This number is too long.',
@@ -44,7 +45,8 @@ const NON_ASCII_DIGIT = /[\u0660-\u0669\u06F0-\u06F9\u0966-\u096F]/g;
 const INVISIBLE = /\p{Cf}/gu;
 /** Whitespace (incl. NBSP and thin spaces), dashes, dots, slashes and brackets. */
 const SEPARATORS = /[\s.\-/\\()[\]~\u2010-\u2015\u2212\u30FC]/g;
-const EXTENSION = /\d[^\d\p{L}]*(?:ext(?:ension|n)?\.?|x)\s*:?\s*\d+\s*$/iu;
+/** `(?::\s*)?` rather than `:?\s*`: two adjacent `\s*` backtrack quadratically on long runs of spaces. */
+const EXTENSION = /\d[^\d\p{L}]*(?:ext(?:ension|n)?\.?|x)\s*(?::\s*)?\d+\s*$/iu;
 
 function toAsciiDigits(value: string): string {
   return value.replace(NON_ASCII_DIGIT, (ch) => {
@@ -129,21 +131,47 @@ function formatInternational(number: PhoneNumber): string {
 interface Reading {
   result: PhoneResult;
   valid: boolean;
+  /** A national number format applied (min metadata only checks a coarse per-country pattern for validity). */
+  formatted: boolean;
+}
+
+const failed = (error: string): Reading => ({ result: fail(error), valid: false, formatted: false });
+
+/**
+ * NANP numbers are NXX-NXX-XXXX: area and exchange codes never start with 0 or 1. This is the structure of the
+ * numbering plan, not metadata that can go stale (new area codes still follow it), so it is safe to enforce.
+ */
+function isImpossibleNanp(number: PhoneNumber): boolean {
+  return number.countryCallingCode === '1' && number.nationalNumber.length === 10 && !/^[2-9]\d\d[2-9]/.test(number.nationalNumber);
+}
+
+/** Mexico dropped the mobile '1' after +52 in 2019, but old contacts still store '+52 1 55 1234 5678'. */
+function withoutLegacyMexicanMobileOne(number: PhoneNumber | undefined): PhoneNumber | undefined {
+  if (number?.countryCallingCode !== '52' || number.isPossible() || !/^1\d{10}$/.test(number.nationalNumber)) return number;
+  return safeParse(`+52${number.nationalNumber.slice(1)}`) ?? number;
 }
 
 function read(text: string, country?: CountryCode): Reading {
-  const parsed = safeParse(text, country);
-  if (!parsed || !parsed.isPossible()) return { result: fail(lengthError(text, country)), valid: false };
+  const parsed = withoutLegacyMexicanMobileOne(safeParse(text, country));
+  if (!parsed || !parsed.isPossible()) return failed(lengthError(text, country));
+  const valid = parsed.isValid();
+  // A leading 0 the default country did not strip as its trunk prefix (US, GR, ES, RU '8 0…', …) is another
+  // country's local format, e.g. Israeli '050-123-4567' read with a US default. Valid numbers (Italy's '06…')
+  // pass, and the user can still force an unknown number by writing it with '+'.
+  const domestic = country !== undefined && parsed.countryCallingCode === getCountryCallingCode(country);
+  if (domestic && !valid && parsed.nationalNumber.startsWith('0')) return failed(ERRORS.foreignLocal);
+  if (isImpossibleNanp(parsed)) return failed(ERRORS.invalid);
+  const formatted = /\D/.test(parsed.formatNational());
   const result = { ok: true as const, digits: parsed.number.slice(1), international: formatInternational(parsed) };
-  if (parsed.isValid()) return { result, valid: true };
-  return { result: { ...result, warning: WARNINGS.unverified }, valid: false };
+  if (valid) return { result, valid, formatted };
+  return { result: { ...result, warning: WARNINGS.unverified }, valid, formatted };
 }
 
 /** Digits that fail for the default country may still be a complete international number (e.g. copied from wa.me). */
 function readAsInternational(digits: string): Reading {
   const reading = digits.startsWith('0') ? undefined : read(`+${digits}`);
-  if (!reading?.valid || !reading.result.ok) return { result: fail(ERRORS.invalid), valid: false };
-  return { result: { ...reading.result, warning: WARNINGS.readAsInternational }, valid: true };
+  if (!reading?.valid || !reading.result.ok) return failed(ERRORS.invalid);
+  return { ...reading, result: { ...reading.result, warning: WARNINGS.readAsInternational } };
 }
 
 /**
@@ -161,8 +189,15 @@ export function normalizePhone(input: string, defaultCountry: string): PhoneResu
   const idd = value.startsWith('00') ? `+${value.slice(2)}` : undefined;
   if (!country) return idd ? read(idd).result : fail(ERRORS.needCountryCode);
 
-  const readings = [read(value, country), idd ? read(idd) : readAsInternational(value)] as const;
-  const best = readings.find((r) => r.valid) ?? readings.find((r) => r.result.ok) ?? readings[0];
+  const national = read(value, country);
+  const international = idd ? read(idd) : readAsInternational(value);
+  // A valid international reading wins over a valid national one when the input starts with '00' (JP, KR and ID
+  // also have national service numbers starting 00, which WhatsApp cannot reach), or when the national reading fits
+  // no national number format: min metadata validates most countries against one coarse pattern only, so Israel
+  // "accepts" '1 212 555 0123' as '+972 12125550123' although no Israeli number looks like that.
+  const internationalFirst = international.valid && (idd !== undefined || !national.formatted);
+  const readings = internationalFirst ? [international, national] : [national, international];
+  const best = readings.find((r) => r.valid) ?? readings.find((r) => r.result.ok) ?? national;
   return best.result;
 }
 

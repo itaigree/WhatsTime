@@ -126,3 +126,24 @@ export function formatOffset(offsetMinutes: number): string {
   const abs = Math.abs(offsetMinutes);
   return `GMT${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`;
 }
+
+export type WallTimeIssue =
+  /** The clocks jump over this time; the event happens at `actual` instead. */
+  | { kind: 'gap'; actual: string }
+  /** This time happens twice; the first one (before the clocks go back) is used. */
+  | { kind: 'repeated' };
+
+/** Whether a wall time is skipped or repeated by a DST change in the zone, else null. */
+export function wallTimeIssue(local: LocalDateTime, timeZone: string): WallTimeIssue | null {
+  const instant = zonedTimeToUtc(local, timeZone);
+  const back = utcToZoned(instant, timeZone);
+  if (back.date !== local.date || back.time !== local.time) return { kind: 'gap', actual: back.time };
+  const offsetNow = offsetMinutesAt(timeZone, instant.getTime());
+  const offsetLater = offsetMinutesAt(timeZone, instant.getTime() + 36 * 3_600_000);
+  if (offsetLater < offsetNow) {
+    const second = new Date(instant.getTime() + (offsetNow - offsetLater) * 60_000);
+    const again = utcToZoned(second, timeZone);
+    if (again.date === local.date && again.time === local.time) return { kind: 'repeated' };
+  }
+  return null;
+}

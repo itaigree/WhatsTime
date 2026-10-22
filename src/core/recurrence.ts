@@ -13,7 +13,7 @@ import {
   parseDate,
   toIcsUtc,
 } from './dates';
-import { zonedTimeToUtc } from './timezone';
+import { offsetMinutesAt, utcToZoned, zonedTimeToUtc } from './timezone';
 import type { Frequency, LocalDateTime, MonthlyMode, Recurrence, RecurrenceEnd, Weekday } from './types';
 
 export const WEEKDAYS: readonly Weekday[] = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'];
@@ -38,6 +38,9 @@ const MAX_PERIODS = 5000;
 const MAX_YEAR = 9999;
 const MAX_INTERVAL = 999;
 const MAX_COUNT = 1000;
+const DAY_MS = 86_400_000;
+/** Latest UNTIL that still fits the 'YYYYMMDDTHHMMSSZ' form. */
+const LAST_UNTIL_MS = Date.UTC(9999, 11, 31, 23, 59, 59);
 
 /** A repeat rule resolved against its start date: which dates each period offers. */
 type Pattern =
@@ -86,7 +89,8 @@ export function alignStart(rec: Recurrence, startDate: string): string {
 /**
  * RRULE value without the 'RRULE:' prefix, or null for frequency 'none'. Part order: FREQ, INTERVAL (if > 1),
  * BYDAY / BYMONTH / BYMONTHDAY, COUNT or UNTIL. UNTIL is the UTC instant of 23:59:59 local time on the until-date
- * in `timeZone`. A Feb 29 yearly rule spells out BYMONTH=2;BYMONTHDAY=29 so every client skips non-leap years.
+ * in `timeZone` (the later one when the clocks fall back at midnight). A Feb 29 yearly rule spells out
+ * BYMONTH=2;BYMONTHDAY=29 so every client skips non-leap years.
  * Throws RangeError for an invalid start date or time zone.
  */
 export function toRRule(rec: Recurrence, start: LocalDateTime, timeZone: string): string | null {
@@ -111,7 +115,8 @@ export function occurrences(rec: Recurrence, start: LocalDateTime, limit: number
   const pattern = patternFor(rec, start.date);
   if (!pattern) return [start.date];
   const end = normalizeEnd(rec.end);
-  const max = end.type === 'count' ? Math.min(limit, end.count) : limit;
+  const wanted = Math.floor(limit);
+  const max = end.type === 'count' ? Math.min(wanted, end.count) : wanted;
   const first = alignStart(rec, start.date);
   const result: string[] = [];
   for (const date of matchingDates(pattern, first, normalizeInterval(rec.interval))) {
@@ -171,13 +176,16 @@ function isIntegerInRange(value: number, min: number, max: number): boolean {
   return Number.isInteger(value) && value >= min && value <= max;
 }
 
+/** Whole number in 1..MAX_INTERVAL (so the RRULE never shows exponent notation such as '1e+21'). */
 function normalizeInterval(interval: number): number {
-  return Number.isFinite(interval) && interval >= 1 ? Math.floor(interval) : 1;
+  return Number.isFinite(interval) && interval >= 1 ? Math.min(Math.floor(interval), MAX_INTERVAL) : 1;
 }
 
 /** Invalid end values fall back to 'never' so RRULE generation and expansion always agree. */
 function normalizeEnd(end: RecurrenceEnd): RecurrenceEnd {
-  if (end.type === 'count' && Number.isFinite(end.count)) return { type: 'count', count: Math.max(1, Math.floor(end.count)) };
+  if (end.type === 'count' && Number.isFinite(end.count)) {
+    return { type: 'count', count: Math.min(Math.max(1, Math.floor(end.count)), Number.MAX_SAFE_INTEGER) };
+  }
   if (end.type === 'until' && isValidDate(end.date)) return end;
   return { type: 'never' };
 }
@@ -222,7 +230,24 @@ function monthlyByRule(mode: MonthlyMode, startDate: string): string {
 function endRule(end: RecurrenceEnd, timeZone: string): string | null {
   if (end.type === 'count') return `COUNT=${end.count}`;
   if (end.type === 'never') return null;
-  return `UNTIL=${toIcsUtc(zonedTimeToUtc({ date: end.date, time: '23:59' }, timeZone, 59))}`;
+  return `UNTIL=${toIcsUtc(untilInstant(end.date, timeZone))}`;
+}
+
+/**
+ * The instant of 23:59:59 local time on `date`. Where the clocks fall back at midnight (Asia/Beirut, America/Santiago,
+ * Africa/Cairo) that wall time happens twice; the later one is used so an occurrence late on the until-date stays
+ * inside UNTIL however a client resolves the repeated hour (ical.js picks the second occurrence), while the next
+ * local day is still excluded. Capped at the end of year 9999 so it always fits 'YYYYMMDDTHHMMSSZ'.
+ */
+function untilInstant(date: string, timeZone: string): Date {
+  const first = zonedTimeToUtc({ date, time: '23:59' }, timeZone, 59).getTime();
+  let last = first;
+  const fallBackMs = (offsetMinutesAt(timeZone, first) - offsetMinutesAt(timeZone, first + DAY_MS)) * 60_000;
+  if (fallBackMs > 0) {
+    const repeated = utcToZoned(new Date(first + fallBackMs), timeZone);
+    if (repeated.date === date && repeated.time === '23:59' && repeated.second === 59) last = first + fallBackMs;
+  }
+  return new Date(Math.min(last, LAST_UNTIL_MS));
 }
 
 function isFeb29(date: string): boolean {

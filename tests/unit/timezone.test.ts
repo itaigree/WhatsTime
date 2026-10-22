@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { addDays, daysInMonth, diffDays, isValidDate, isValidTime, isoWeekdayIndex, toIcsLocal, toIcsUtc } from '../../src/core/dates';
-import { formatOffset, isValidTimeZone, offsetMinutesAt, utcToZoned, zonedTimeToUtc } from '../../src/core/timezone';
+import { formatOffset, isValidTimeZone, offsetMinutesAt, utcToZoned, wallTimeIssue, zonedTimeToUtc } from '../../src/core/timezone';
 
 describe('dates', () => {
   it('validates dates and times', () => {
@@ -83,5 +83,25 @@ describe('timezone edge cases', () => {
   it('converts wall times in years 1-99 without jumping to the 1900s', () => {
     expect(zonedTimeToUtc({ date: '0026-10-22', time: '09:00' }, 'UTC').toISOString()).toBe('0026-10-22T09:00:00.000Z');
     expect(offsetMinutesAt('UTC', Date.parse('0026-10-22T09:00:00Z'))).toBe(0);
+  });
+});
+
+describe('wallTimeIssue', () => {
+  it('flags times skipped by spring-forward with the time actually used', () => {
+    expect(wallTimeIssue({ date: '2027-03-26', time: '02:30' }, 'Asia/Jerusalem')).toEqual({ kind: 'gap', actual: '03:30' });
+    expect(wallTimeIssue({ date: '2026-03-08', time: '02:00' }, 'America/New_York')).toEqual({ kind: 'gap', actual: '03:00' });
+  });
+
+  it('flags times repeated by fall-back', () => {
+    expect(wallTimeIssue({ date: '2026-10-25', time: '01:30' }, 'Asia/Jerusalem')).toEqual({ kind: 'repeated' });
+    expect(wallTimeIssue({ date: '2026-11-01', time: '01:59' }, 'America/New_York')).toEqual({ kind: 'repeated' });
+  });
+
+  it('returns null for ordinary times, including the edges of a change', () => {
+    expect(wallTimeIssue({ date: '2026-10-25', time: '02:00' }, 'Asia/Jerusalem')).toBeNull();
+    expect(wallTimeIssue({ date: '2026-10-25', time: '00:59' }, 'Asia/Jerusalem')).toBeNull();
+    expect(wallTimeIssue({ date: '2027-03-26', time: '03:00' }, 'Asia/Jerusalem')).toBeNull();
+    expect(wallTimeIssue({ date: '2026-07-01', time: '09:00' }, 'UTC')).toBeNull();
+    expect(wallTimeIssue({ date: '2026-07-01', time: '09:00' }, 'Asia/Kolkata')).toBeNull();
   });
 });

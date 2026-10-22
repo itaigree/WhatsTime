@@ -19,21 +19,28 @@ interface CardDraft {
   fn: string;
   n: string;
   org: string;
-  tels: { group: string; value: string; types: string[] }[];
+  tels: { group: string; value: string; types: string[]; customLabel: string }[];
   groupLabels: Map<string, string>;
 }
 
 const CARD_BOUNDARY = /^\s*(?:BEGIN|END)\s*:\s*VCARD\s*$/i;
 const QP_PARAM = /;\s*(?:ENCODING\s*=\s*)?"?QUOTED-PRINTABLE"?\s*(?=;|$)/i;
+/** RFC 2045: a soft line break is '=' at the end of a line, possibly followed by transport-added whitespace. */
+const QP_SOFT_BREAK = /=[ \t]*$/;
 const BARE_ENCODINGS = new Set(['QUOTED-PRINTABLE', 'BASE64', 'B', '8BIT', '7BIT']);
+/** Samsung Contacts: TEL;X-CUSTOM(CHARSET=UTF-8,ENCODING=QUOTED-PRINTABLE,<label>) or TEL;X-CUSTOM(<label>). */
+const SAMSUNG_CUSTOM = /^X-CUSTOM\((.*)\)$/is;
+const SAMSUNG_CUSTOM_OPTION = /^\s*(CHARSET|ENCODING)\s*=\s*([^,]*),/i;
+const NAME_TOKEN = /^(?:(.+)\.)?([A-Za-z0-9_-]+)$/;
 
 /** Index of the first `char` that is not inside double quotes, or -1. */
 function indexOfUnquoted(text: string, char: string): number {
+  const target = char.charCodeAt(0);
   let quoted = false;
   for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (c === '"') quoted = !quoted;
-    else if (c === char && !quoted) return i;
+    const c = text.charCodeAt(i);
+    if (c === 0x22) quoted = !quoted;
+    else if (c === target && !quoted) return i;
   }
   return -1;
 }
@@ -54,37 +61,72 @@ function isQuotedPrintableLine(line: string): boolean {
   return colon > 0 && QP_PARAM.test(line.slice(0, colon));
 }
 
+/** Index of the '=' that starts a quoted-printable soft line break at the end of `line`, or -1. */
+function softBreakIndex(line: string): number {
+  const last = line.charCodeAt(line.length - 1);
+  if (last === 0x3d) return line.length - 1;
+  if (last !== 0x20 && last !== 0x09) return -1;
+  return QP_SOFT_BREAK.exec(line)?.index ?? -1;
+}
+
 /** Join folded lines (leading space/tab) and quoted-printable soft line breaks ('=' at end of line). */
 function unfoldLines(text: string): string[] {
   const lines: string[] = [];
-  let parts: string[] = [];
+  const parts: string[] = [];
+  const flush = (): void => {
+    if (parts.length > 0) lines.push(parts.length === 1 ? (parts[0] ?? '') : parts.join(''));
+    parts.length = 0;
+  };
   let quotedPrintable = false;
   let softBreak = false;
   for (const physical of text.split(/\r\n|\r|\n/)) {
     let line = physical.charCodeAt(0) === 0xfeff ? physical.slice(1) : physical;
     const isSoftContinuation = softBreak && !CARD_BOUNDARY.test(line);
-    const isFold = !softBreak && parts.length > 0 && /^[ \t]/.test(line);
+    const first = line.charCodeAt(0);
+    const isFold = !softBreak && parts.length > 0 && (first === 0x20 || first === 0x09);
     if (isFold) {
       line = line.slice(1);
     } else if (!isSoftContinuation) {
-      if (parts.length > 0) lines.push(parts.join(''));
-      parts = [];
+      flush();
       quotedPrintable = isQuotedPrintableLine(line);
     }
-    softBreak = quotedPrintable && line.endsWith('=');
-    parts.push(softBreak ? line.slice(0, -1) : line);
+    const softBreakAt = quotedPrintable ? softBreakIndex(line) : -1;
+    softBreak = softBreakAt >= 0;
+    parts.push(softBreak ? line.slice(0, softBreakAt) : line);
   }
-  if (parts.length > 0) lines.push(parts.join(''));
+  flush();
   return lines;
 }
 
-function addParam(params: Map<string, string[]>, key: string, values: string[]): void {
-  params.set(key, [...(params.get(key) ?? []), ...values.filter((v) => v !== '')]);
+/** Appends in place: copying the list on every parameter made a line with many parameters quadratic. */
+function addParam(params: Map<string, string[]>, key: string, values: readonly string[]): void {
+  let list = params.get(key);
+  if (!list) params.set(key, (list = []));
+  for (const value of values) if (value !== '') list.push(value);
 }
 
-function parseParams(tokens: string[]): Map<string, string[]> {
+/** The label inside Samsung's X-CUSTOM(...) parameter, decoded when it is quoted-printable. */
+function samsungCustomLabel(inner: string): string {
+  let rest = inner;
+  let charset = 'utf-8';
+  let quotedPrintable = false;
+  for (let option = SAMSUNG_CUSTOM_OPTION.exec(rest); option; option = SAMSUNG_CUSTOM_OPTION.exec(rest)) {
+    const value = (option[2] ?? '').trim();
+    if ((option[1] ?? '').toUpperCase() === 'CHARSET') charset = value;
+    else quotedPrintable = value.toUpperCase() === 'QUOTED-PRINTABLE';
+    rest = rest.slice(option[0].length);
+  }
+  return cleanText(quotedPrintable ? decodeQuotedPrintable(rest, charset) : rest);
+}
+
+function parseParams(tokens: readonly string[]): Map<string, string[]> {
   const params = new Map<string, string[]>();
   for (const token of tokens) {
+    const custom = SAMSUNG_CUSTOM.exec(token.trim());
+    if (custom) {
+      addParam(params, 'X-CUSTOM', [samsungCustomLabel(custom[1] ?? '')]);
+      continue;
+    }
     const eq = token.indexOf('=');
     if (eq < 0) {
       const bare = token.replace(/"/g, '').trim();
@@ -99,36 +141,76 @@ function parseParams(tokens: string[]): Map<string, string[]> {
 }
 
 function parseContentLine(line: string): ContentLine | null {
-  const colon = indexOfUnquoted(line, ':');
+  // An unbalanced quote in the parameters must not hide the value: fall back to the first colon.
+  let colon = indexOfUnquoted(line, ':');
+  if (colon < 0) colon = line.indexOf(':');
   if (colon < 0) return null;
-  const [head = '', ...paramTokens] = splitUnquoted(line.slice(0, colon), ';');
-  const match = /^(?:(.+)\.)?([A-Za-z0-9_-]+)$/.exec(head.trim());
+  const head = line.slice(0, colon);
+  const semicolon = indexOfUnquoted(head, ';');
+  const match = NAME_TOKEN.exec((semicolon < 0 ? head : head.slice(0, semicolon)).trim());
   if (!match) return null;
+  const name = (match[2] ?? '').toUpperCase();
+  // Parameters of properties we ignore (PHOTO, EMAIL, ADR, ...) are never looked at; skip parsing them.
+  const wanted = semicolon >= 0 && RELEVANT_PROPERTIES.has(name);
   return {
     group: (match[1] ?? '').toLowerCase(),
-    name: (match[2] ?? '').toUpperCase(),
-    params: parseParams(paramTokens),
+    name,
+    params: wanted ? parseParams(splitUnquoted(head.slice(semicolon + 1), ';')) : new Map(),
     value: line.slice(colon + 1),
   };
 }
 
+const UTF8_ENCODER = new TextEncoder();
+const DECODERS = new Map<string, TextDecoder>();
+
 function textDecoderFor(charset: string): TextDecoder {
-  try {
-    return new TextDecoder(charset || 'utf-8');
-  } catch {
-    return new TextDecoder('utf-8');
+  const key = charset.trim().toLowerCase() || 'utf-8';
+  let decoder = DECODERS.get(key);
+  if (!decoder) {
+    try {
+      decoder = new TextDecoder(key);
+    } catch {
+      decoder = new TextDecoder('utf-8');
+    }
+    if (DECODERS.size < 32) DECODERS.set(key, decoder);
   }
+  return decoder;
 }
 
-/** Decode quoted-printable to bytes, then to text in `charset` (default UTF-8). */
+function hexDigit(code: number): number {
+  if (code >= 0x30 && code <= 0x39) return code - 0x30;
+  const lower = code | 0x20;
+  return lower >= 0x61 && lower <= 0x66 ? lower - 0x57 : -1;
+}
+
+/** Reused between calls for ordinary values (decoding is synchronous), so a big export does not churn the GC. */
+const SCRATCH = new Uint8Array(16384);
+
+/** Decode quoted-printable to bytes, then to text in `charset` (default UTF-8). Stray '=' signs are dropped. */
 function decodeQuotedPrintable(value: string, charset: string): string {
-  const encoder = new TextEncoder();
-  const bytes: number[] = [];
-  for (const [, hex, text] of value.matchAll(/=([0-9A-Fa-f]{2})|=|([^=]+)/g)) {
-    if (hex) bytes.push(parseInt(hex, 16));
-    else if (text) for (const byte of encoder.encode(text)) bytes.push(byte);
+  // Every UTF-16 code unit becomes at most 3 bytes of UTF-8, and '=XX' becomes 1 byte.
+  const bytes = value.length * 3 <= SCRATCH.length ? SCRATCH : new Uint8Array(value.length * 3);
+  let length = 0;
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code === 0x3d) {
+      const high = hexDigit(value.charCodeAt(i + 1));
+      const low = high < 0 ? -1 : hexDigit(value.charCodeAt(i + 2));
+      if (low >= 0) {
+        bytes[length++] = high * 16 + low;
+        i += 2;
+      }
+    } else if (code < 0x80) {
+      bytes[length++] = code;
+    } else {
+      // Raw non-ASCII text inside a quoted-printable value (not allowed, but seen): keep it, as UTF-8.
+      let end = i + 1;
+      while (end < value.length && value.charCodeAt(end) >= 0x80) end++;
+      length += UTF8_ENCODER.encodeInto(value.slice(i, end), bytes.subarray(length)).written;
+      i = end - 1;
+    }
   }
-  return textDecoderFor(charset).decode(Uint8Array.from(bytes));
+  return textDecoderFor(charset).decode(bytes.subarray(0, length));
 }
 
 function decodeValue(line: ContentLine): string {
@@ -255,7 +337,9 @@ function addProperty(draft: CardDraft, line: ContentLine): void {
       break;
     case 'TEL': {
       const tel = telValue(value);
-      if (tel) draft.tels.push({ group: line.group, value: tel, types: line.params.get('TYPE') ?? [] });
+      if (!tel) break;
+      const customLabel = line.params.get('X-CUSTOM')?.find(Boolean) ?? '';
+      draft.tels.push({ group: line.group, value: tel, types: line.params.get('TYPE') ?? [], customLabel });
       break;
     }
     case 'X-ABLABEL':
@@ -272,7 +356,7 @@ function finishDraft(draft: CardDraft): VCardContact | null {
     if (seen.has(key)) continue;
     seen.add(key);
     const groupLabel = tel.group ? draft.groupLabels.get(tel.group) : undefined;
-    phones.push({ value: tel.value, label: groupLabel || labelFromTypes(tel.types) });
+    phones.push({ value: tel.value, label: groupLabel || tel.customLabel || labelFromTypes(tel.types) });
   }
   if (phones.length === 0) return null;
   return { name: draft.fn || draft.n || draft.org, phones };

@@ -70,9 +70,15 @@ describe('buildWhatsAppLink: encoding', () => {
     ['"', '%22'],
     ['<>', '%3C%3E'],
     ['\\', '%5C'],
-    ["'", "'"],
-    ['!', '!'],
-    ['*()~-_.', '*()~-_.'],
+    // Inside the message, encodeURIComponent leaves these as they are...
+    ["a'b", "a'b"],
+    ['a!b', 'a!b'],
+    ['a*()~-_.b', 'a*()~-_.b'],
+    // ...but at the very end they are escaped, because calendar linkifiers leave trailing punctuation out of the link.
+    ["'", '%27'],
+    ['!', '%21'],
+    ['*()~-_.', '%2A%28%29%7E%2D%5F%2E'],
+    ['Hi.', 'Hi%2E'],
   ])('encodes %j as %s', (input, encoded) => {
     expect(buildWhatsAppLink(PHONE, input)).toBe(`https://wa.me/972501234567?text=${encoded}`);
   });

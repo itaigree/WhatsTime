@@ -40,6 +40,11 @@ export interface Recurrence {
   weekdays: Weekday[];
   /** Monthly only. */
   monthlyMode: MonthlyMode;
+  /**
+   * First day of the week (RFC 5545 WKST) used to group days for weekly rules with interval > 1, e.g. 'SU' in
+   * Israel so "every 2 weeks on Sun and Tue" keeps Sunday and the following Tuesday together. Default 'MO'.
+   */
+  weekStart?: Weekday;
   end: RecurrenceEnd;
 }
 

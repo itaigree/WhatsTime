@@ -8,6 +8,7 @@
 import { isValidDate, isValidTime } from './dates';
 import { MAX_REMINDER_MINUTES } from './event';
 import { WEEKDAYS, defaultRecurrence } from './recurrence';
+import { isValidTimeZone } from './timezone';
 import type {
   Frequency,
   LocalDateTime,
@@ -39,6 +40,10 @@ export interface AppStore {
   listRecentContacts(): SavedContact[];
   /** Dedupes by phone digits ('' phone ignored); keeps CONTACTS_CAP entries. */
   rememberContact(contact: { name: string; phone: string }, now: Date): void;
+  /** Removes one recent contact by phone digits. */
+  forgetContact(phone: string): void;
+  clearRecentContacts(): void;
+  clearHistory(): void;
   loadDraft(): Partial<ScheduledMessage> | null;
   saveDraft(draft: Partial<ScheduledMessage>): void;
   clearDraft(): void;
@@ -71,7 +76,8 @@ const isReminder = (v: unknown): v is number => isIntInRange(v, 0, MAX_REMINDER_
 const isDuration = (v: unknown): v is number => isIntInRange(v, 1, MAX_DURATION_MINUTES);
 const isCountry = (v: unknown): v is string => isString(v) && /^[A-Z]{2}$/.test(v);
 const isTimestamp = (v: unknown): v is string => isString(v) && Number.isFinite(Date.parse(v));
-const isPhoneDigits = (v: unknown): v is string => isString(v) && /^\d{0,15}$/.test(v);
+/** Recipient.phone: '' or international digits without '+' or leading zeros. */
+const isPhoneDigits = (v: unknown): v is string => isString(v) && /^(?:[1-9]\d{0,14})?$/.test(v);
 const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => list.includes(v as T);
 
 /** Field validators for persisted records; strict (history) or lenient for work-in-progress text (draft). */
@@ -87,7 +93,8 @@ const STRICT: FieldRules = {
   phone: isPhoneDigits,
   date: (v): v is string => isString(v) && isValidDate(v),
   time: (v): v is string => isString(v) && isValidTime(v),
-  timeZone: isNonEmptyString,
+  // An unknown zone would make every calendar conversion of the record throw.
+  timeZone: (v): v is string => isString(v) && isValidTimeZone(v),
   createdAt: isTimestamp,
 };
 
@@ -213,8 +220,14 @@ function uniqueBy<T>(items: T[], key: (item: T) => string): T[] {
   });
 }
 
-function orderHistory(items: ScheduledMessage[]): ScheduledMessage[] {
-  return uniqueBy(newestFirst(items, (m) => m.createdAt), (m) => m.id).slice(0, HISTORY_CAP);
+/** A valid history record: its clean form, plus the form it is stored in (which may hold newer fields). */
+interface HistoryEntry {
+  message: ScheduledMessage;
+  stored: unknown;
+}
+
+function orderHistory(entries: HistoryEntry[]): HistoryEntry[] {
+  return uniqueBy(newestFirst(entries, (e) => e.message.createdAt), (e) => e.message.id).slice(0, HISTORY_CAP);
 }
 
 function orderContacts(items: SavedContact[]): SavedContact[] {
@@ -260,7 +273,17 @@ export function createStore(backend: KeyValueStore | null, onWriteError?: (error
   const write = (key: string, value: unknown): void => attempt((store) => store.setItem(key, JSON.stringify(value)));
   const remove = (key: string): void => attempt((store) => store.removeItem(key));
 
-  const listHistory = (): ScheduledMessage[] => orderHistory(sanitizeList(read(KEYS.history), sanitizeMessage));
+  const readHistory = (): HistoryEntry[] =>
+    orderHistory(
+      sanitizeList(read(KEYS.history), (stored) => {
+        const message = sanitizeMessage(stored);
+        return message ? { message, stored } : null;
+      }),
+    );
+  // Rewrites keep other records as stored, so fields written by a newer version (a stale tab or service worker can
+  // run older code on the same data) are not stripped or downgraded.
+  const writeHistory = (entries: HistoryEntry[]): void => write(KEYS.history, entries.map((e) => e.stored));
+  const listHistory = (): ScheduledMessage[] => readHistory().map((e) => e.message);
   const listRecentContacts = (): SavedContact[] => orderContacts(sanitizeList(read(KEYS.contacts), sanitizeContact));
 
   return {
@@ -271,24 +294,32 @@ export function createStore(backend: KeyValueStore | null, onWriteError?: (error
     saveToHistory(message) {
       const clean = sanitizeMessage(message);
       if (!clean) return;
-      const others = listHistory().filter((m) => m.id !== clean.id);
-      write(KEYS.history, orderHistory([clean, ...others]));
+      const others = readHistory().filter((e) => e.message.id !== clean.id);
+      writeHistory(orderHistory([{ message: clean, stored: clean }, ...others]));
     },
     deleteFromHistory(id) {
-      const history = listHistory();
-      const remaining = history.filter((m) => m.id !== id);
-      if (remaining.length !== history.length) write(KEYS.history, remaining);
+      const history = readHistory();
+      const remaining = history.filter((e) => e.message.id !== id);
+      if (remaining.length !== history.length) writeHistory(remaining);
     },
     listRecentContacts,
     rememberContact(contact, now) {
       const phone = contact.phone.replace(/\D/g, '');
-      if (!phone) return;
+      if (!phone || !isPhoneDigits(phone)) return;
       const contacts = listRecentContacts();
       const previous = contacts.find((c) => c.phone === phone);
       const name = contact.name.trim() || previous?.name || '';
       const updated = { name, phone, lastUsed: now.toISOString() };
       write(KEYS.contacts, orderContacts([updated, ...contacts.filter((c) => c.phone !== phone)]));
     },
+    forgetContact(phone) {
+      const digits = phone.replace(/\D/g, '');
+      const contacts = listRecentContacts();
+      const remaining = contacts.filter((c) => c.phone !== digits);
+      if (remaining.length !== contacts.length) write(KEYS.contacts, remaining);
+    },
+    clearRecentContacts: () => remove(KEYS.contacts),
+    clearHistory: () => remove(KEYS.history),
     loadDraft: () => sanitizeDraft(read(KEYS.draft)),
     saveDraft(draft) {
       const clean = sanitizeDraft(draft);

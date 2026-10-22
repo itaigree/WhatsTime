@@ -690,3 +690,59 @@ describe('newId', () => {
     for (const id of ids) expect(id).toMatch(UUID_V4);
   });
 });
+
+describe('clearing data', () => {
+  function memory(): KeyValueStore & { data: Map<string, string> } {
+    const data = new Map<string, string>();
+    return {
+      data,
+      getItem: (k) => data.get(k) ?? null,
+      setItem: (k, v) => void data.set(k, v),
+      removeItem: (k) => void data.delete(k),
+    };
+  }
+
+  it('forgets one recent contact and clears all of them', () => {
+    const backend = memory();
+    const store = createStore(backend);
+    store.rememberContact({ name: 'Mom', phone: '972501234567' }, new Date('2026-10-22T10:00:00Z'));
+    store.rememberContact({ name: 'Dad', phone: '972521234567' }, new Date('2026-10-22T11:00:00Z'));
+    store.forgetContact('+972 50-123-4567');
+    expect(store.listRecentContacts().map((c) => c.name)).toEqual(['Dad']);
+    store.forgetContact('999');
+    expect(store.listRecentContacts()).toHaveLength(1);
+    store.clearRecentContacts();
+    expect(store.listRecentContacts()).toEqual([]);
+    expect([...backend.data.keys()].some((k) => k.endsWith('contacts'))).toBe(false);
+  });
+
+  it('clears history', () => {
+    const backend = memory();
+    const store = createStore(backend);
+    backend.setItem('whatstime:v1:history', '[]');
+    store.clearHistory();
+    expect(backend.data.has('whatstime:v1:history')).toBe(false);
+    expect(store.listHistory()).toEqual([]);
+  });
+
+  it('never throws when the backend is missing or broken', () => {
+    const broken: KeyValueStore = {
+      getItem: () => {
+        throw new Error('blocked');
+      },
+      setItem: () => {
+        throw new Error('blocked');
+      },
+      removeItem: () => {
+        throw new Error('blocked');
+      },
+    };
+    for (const store of [createStore(null), createStore(broken)]) {
+      expect(() => {
+        store.forgetContact('1');
+        store.clearRecentContacts();
+        store.clearHistory();
+      }).not.toThrow();
+    }
+  });
+});
