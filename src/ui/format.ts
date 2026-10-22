@@ -95,6 +95,13 @@ export function dayLabel(date: string): string {
   );
 }
 
+/** '26 Mar' (with the year when it is not this year). */
+export function dateLabel(date: string): string {
+  if (!isValidDate(date)) return date;
+  const withYear = parseDate(date).year !== thisYear();
+  return formatter({ day: 'numeric', month: 'short', ...(withYear && { year: 'numeric' }) }).format(wallClock(date));
+}
+
 /** '09:00' or '9:00 AM' depending on the locale. */
 export function timeLabel(time: string): string {
   if (!isValidTime(time)) return time;

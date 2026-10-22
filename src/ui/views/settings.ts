@@ -56,8 +56,8 @@ export function settingsView(ctx: AppContext): View {
           danger: true,
         });
         if (!ok) return;
-        for (const msg of ctx.store.listHistory()) ctx.store.deleteFromHistory(msg.id);
-        updateCount();
+        ctx.store.clearHistory();
+        updateCounts();
         ctx.announce('Scheduled list cleared');
       },
     },
@@ -65,15 +65,44 @@ export function settingsView(ctx: AppContext): View {
     'Clear scheduled list',
   );
 
-  function updateCount(): void {
+  const contactsCount = h('p', { class: 'muted' });
+  const clearContactsButton = h(
+    'button',
+    {
+      type: 'button',
+      class: 'btn btn-secondary btn-danger',
+      onClick: async () => {
+        const ok = await confirmDialog({
+          title: 'Clear recent contacts?',
+          body: "This removes the names and numbers shown under Recent. Your phone's contacts are not affected.",
+          confirmLabel: 'Clear contacts',
+          danger: true,
+        });
+        if (!ok) return;
+        ctx.store.clearRecentContacts();
+        updateCounts();
+        ctx.announce('Recent contacts cleared');
+      },
+    },
+    icon('trash'),
+    'Clear recent contacts',
+  );
+
+  function updateCounts(): void {
     const count = ctx.store.listHistory().length;
     historyCount.textContent =
       count === 0
         ? 'No reminders saved on this device.'
         : `${count} ${count === 1 ? 'reminder' : 'reminders'} saved on this device.`;
     clearButton.disabled = count === 0;
+    const contacts = ctx.store.listRecentContacts().length;
+    contactsCount.textContent =
+      contacts === 0
+        ? 'No recent contacts saved on this device.'
+        : `${contacts} recent ${contacts === 1 ? 'contact' : 'contacts'} saved on this device.`;
+    clearContactsButton.disabled = contacts === 0;
   }
-  updateCount();
+  updateCounts();
 
   const element = h(
     'div',
@@ -94,6 +123,7 @@ export function settingsView(ctx: AppContext): View {
       ),
     ),
     card('Scheduled list', historyCount, clearButton),
+    card('Recent contacts', contactsCount, clearContactsButton),
     card(
       'How it works',
       h(
@@ -113,13 +143,22 @@ export function settingsView(ctx: AppContext): View {
     card(
       'Privacy',
       h(
-        'p',
+        'div',
         { class: 'with-icon' },
         icon('lock'),
         h(
-          'span',
-          null,
-          'Everything stays on this device. WhatsTime has no server and never sends your contacts or messages anywhere.',
+          'div',
+          { class: 'stack-tight' },
+          h(
+            'p',
+            null,
+            'WhatsTime has no server of its own. Your reminders, recent contacts and draft are stored only on this device.',
+          ),
+          h(
+            'p',
+            null,
+            'When you tap Add to Google Calendar or open the WhatsApp link, the event details or the message are sent to Google or WhatsApp. The .ics file stays on your device until you import it into a calendar.',
+          ),
         ),
       ),
     ),

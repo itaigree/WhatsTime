@@ -14,7 +14,7 @@ import { defaultStart, createWhenSection, isFuture } from '../components/when';
 import { errorSlot, field, selectControl, selectValue } from '../components/field';
 import type { AppContext, View } from '../context';
 import { debounce, h, inDocumentOrder } from '../dom';
-import { REMINDER_OPTIONS, reminderLabel } from '../format';
+import { REMINDER_OPTIONS, recipientLabel, reminderLabel } from '../format';
 import { icon } from '../icons';
 import { doneHref } from '../router';
 
@@ -56,7 +56,13 @@ export function composeView(ctx: AppContext): View {
 
   const recipient = createRecipientSection({
     defaultCountry: settings.defaultCountry,
-    recentContacts: store.listRecentContacts(),
+    recents: {
+      list: () => store.listRecentContacts(),
+      forget(contact) {
+        store.forgetContact(contact.phone);
+        ctx.announce(`Removed ${recipientLabel(contact)} from recent contacts`);
+      },
+    },
     onChange: changed,
   });
 
@@ -248,7 +254,11 @@ export function composeView(ctx: AppContext): View {
     if (msg.recipient.phone) store.rememberContact({ name: msg.recipient.name, phone: msg.recipient.phone }, now);
     store.clearDraft();
     ctx.lastCreated = msg;
-    ctx.notice = warnings.length > 0 ? { id: msg.id, warnings: warnings.map((w) => w.message) } : null;
+    const phoneWarning = 'recipient' in who ? who.warning : undefined;
+    ctx.notice =
+      warnings.length > 0 || phoneWarning
+        ? { id: msg.id, warnings: warnings.map((w) => w.message), phoneWarning }
+        : null;
     ctx.navigate(doneHref(msg.id));
   }
 

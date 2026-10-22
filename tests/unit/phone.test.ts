@@ -252,12 +252,30 @@ describe('normalizePhone: warnings', () => {
 });
 
 describe('detectDefaultCountry', () => {
-  it('uses the region of the first language tag that has one', () => {
+  it('uses the region of the first language tag that has one when the zone is unknown', () => {
     expect(detectDefaultCountry(['he-IL'])).toBe('IL');
     expect(detectDefaultCountry(['he', 'en-GB', 'en-US'])).toBe('GB');
-    expect(detectDefaultCountry(['en-US', 'he-IL'], 'Asia/Jerusalem')).toBe('US');
+    expect(detectDefaultCountry(['en-US', 'he-IL'], 'UTC')).toBe('US');
     expect(detectDefaultCountry(['zh-Hant-TW'])).toBe('TW');
     expect(detectDefaultCountry(['pt-br'])).toBe('BR');
+  });
+
+  // The phone's zone says where the contacts are; the UI language often does not (en-US or ru-RU phones in Israel).
+  it('prefers the region of a known time zone over the language region', () => {
+    expect(detectDefaultCountry(['en-US'], 'Asia/Jerusalem')).toBe('IL');
+    expect(detectDefaultCountry(['ru-RU'], 'Asia/Jerusalem')).toBe('IL');
+    expect(detectDefaultCountry(['en-US', 'he-IL'], 'Asia/Jerusalem')).toBe('IL');
+    expect(detectDefaultCountry(['en-GB', 'fr-FR'], 'Asia/Jerusalem')).toBe('IL');
+    expect(detectDefaultCountry(['fr-FR'], 'Europe/Paris')).toBe('FR');
+    expect(detectDefaultCountry(['he-IL'], 'America/New_York')).toBe('US');
+  });
+
+  it('uses the language region when the zone is missing, unmapped or invalid', () => {
+    expect(detectDefaultCountry(['en-GB'], 'Etc/GMT-3')).toBe('GB');
+    expect(detectDefaultCountry(['ru-RU'], 'Asia/Novosibirsk')).toBe('RU');
+    expect(detectDefaultCountry(['fr-FR'], 'Mars/Olympus_Mons')).toBe('FR');
+    expect(detectDefaultCountry(['fr-FR'], '')).toBe('FR');
+    expect(detectDefaultCountry(['fr-FR'], undefined)).toBe('FR');
   });
 
   it('accepts underscore-separated tags and canonical aliases', () => {
@@ -267,6 +285,7 @@ describe('detectDefaultCountry', () => {
 
   it('skips regions libphonenumber does not support', () => {
     expect(detectDefaultCountry(['es-419'], 'America/Mexico_City')).toBe('MX');
+    expect(detectDefaultCountry(['es-419', 'es-MX'])).toBe('MX');
     expect(detectDefaultCountry(['en-001', 'fr-FR'])).toBe('FR');
   });
 

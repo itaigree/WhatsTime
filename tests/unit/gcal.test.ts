@@ -33,14 +33,23 @@ describe('buildGoogleCalendarUrl: shape and encoding', () => {
   it('builds the exact URL for a simple one-off event', () => {
     expect(buildGoogleCalendarUrl(makeEvent({ title: 'Hi there', description: 'Line 1\nLine 2' }))).toBe(
       'https://calendar.google.com/calendar/render?action=TEMPLATE&text=Hi+there' +
-        '&dates=20261025T090000%2F20261025T091500&ctz=Asia%2FJerusalem&details=Line+1%0ALine+2',
+        '&dates=20261025T090000%2F20261025T091500&ctz=Asia%2FJerusalem&crm=AVAILABLE&trp=false' +
+        '&details=Line+1%0ALine+2',
     );
   });
 
   it('emits params in a fixed order and each exactly once', () => {
     const p = params(makeEvent({ rrule: 'FREQ=DAILY' }));
-    expect([...p.keys()]).toEqual(['action', 'text', 'dates', 'ctz', 'details', 'recur']);
+    expect([...p.keys()]).toEqual(['action', 'text', 'dates', 'ctz', 'crm', 'trp', 'details', 'recur']);
     expect(p.get('action')).toBe('TEMPLATE');
+  });
+
+  it('marks the event as free (available), like TRANSP:TRANSPARENT in the .ics', () => {
+    for (const rrule of [null, 'FREQ=WEEKLY;BYDAY=SU,TU']) {
+      const p = params(makeEvent({ rrule }));
+      expect(p.getAll('crm')).toEqual(['AVAILABLE']);
+      expect(p.getAll('trp')).toEqual(['false']);
+    }
   });
 
   it('round-trips title and description with reserved characters, Hebrew, emoji and newlines', () => {

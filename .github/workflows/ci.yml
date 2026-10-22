@@ -4,8 +4,8 @@ on:
   push:
   pull_request:
 
-permissions:
-  contents: read
+# Nothing by default; each job asks for what it needs.
+permissions: {}
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -15,8 +15,12 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:

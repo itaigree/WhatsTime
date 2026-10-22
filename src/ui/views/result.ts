@@ -2,7 +2,7 @@
 
 import { firstReminderAt, toCalendarEvent } from '../../core/event';
 import { formatPhoneForDisplay } from '../../core/phone';
-import { buildGoogleCalendarUrl } from '../../core/gcal';
+import { GOOGLE_CALENDAR_URL_MAX_LENGTH, buildGoogleCalendarUrl } from '../../core/gcal';
 import { buildIcs, icsFileName } from '../../core/ics';
 import { describeRecurrence } from '../../core/recurrence';
 import { getDeviceTimeZone, utcToZoned } from '../../core/timezone';
@@ -35,10 +35,16 @@ function summaryRow(term: string, ...details: Child[]): HTMLElement[] {
   return [h('dt', null, term), h('dd', null, ...details)];
 }
 
-function googleNote(minutes: number): string {
-  const wanted = minutes === 0 ? 'At time of event' : reminderLabel(minutes);
-  return `Opens Google Calendar with everything filled in. It uses your default notification; set it to '${wanted}' before saving if needed.`;
+/** Google's template link can't carry the reminder, so say which notification to pick (in Google's words). */
+function googleNote(msg: ScheduledMessage): string {
+  const filled = msg.recurrence.frequency === 'none' ? 'the message and time' : 'the message, time and repeat';
+  const wanted = msg.reminderMinutesBefore === 0 ? 'At time of event' : reminderLabel(msg.reminderMinutesBefore);
+  return `Opens Google Calendar with ${filled} filled in. Google can't take the reminder from a link: before you tap Save, set the notification to '${wanted}'.`;
 }
+
+const ICS_NOTE =
+  'For Samsung Calendar, Outlook, Apple Calendar and others. Includes the reminder. Open the downloaded file from the ' +
+  "notification or the Files app and choose your calendar app. Google Calendar can't open these files.";
 
 function action(link: HTMLElement, note: string): HTMLElement {
   return h('div', { class: 'action' }, link, h('p', { class: 'action-note' }, note));
@@ -131,6 +137,9 @@ export function resultView(ctx: AppContext, id: string): View {
           { dir: 'ltr', class: name ? 'muted block' : 'strong block' },
           formatPhoneForDisplay(msg.recipient.phone),
         ),
+        notice?.phoneWarning
+          ? h('span', { class: 'inline-warning' }, icon('warning', 18), h('span', null, notice.phoneWarning))
+          : null,
       ]
     : [h('span', { class: 'strong' }, 'Choose chat in WhatsApp')];
   const summary = h(
@@ -189,19 +198,30 @@ export function resultView(ctx: AppContext, id: string): View {
         )
       : null;
 
+  // Even with the description shortened, a long message can leave the link too long for Google to open.
+  const googleUrl = buildGoogleCalendarUrl(event);
+  const googleFits = googleUrl.length <= GOOGLE_CALENDAR_URL_MAX_LENGTH;
   const actions = h(
     'section',
     { class: 'card actions', 'aria-label': 'Add to calendar' },
+    googleFits
+      ? action(
+          actionLink(googleUrl, 'calendar', 'Add to Google Calendar', true, { target: '_blank', rel: 'noopener' }),
+          googleNote(msg),
+        )
+      : h(
+          'p',
+          { class: 'inline-warning' },
+          icon('warning', 18),
+          h(
+            'span',
+            null,
+            'This message is too long for a Google Calendar link. Use the calendar file below, or edit a copy with a shorter message.',
+          ),
+        ),
     action(
-      actionLink(buildGoogleCalendarUrl(event), 'calendar', 'Add to Google Calendar', true, {
-        target: '_blank',
-        rel: 'noopener',
-      }),
-      googleNote(msg.reminderMinutesBefore),
-    ),
-    action(
-      actionLink(icsUrl, 'download', 'Download calendar file (.ics)', false, { download: icsFileName(event) }),
-      'For Samsung Calendar, Outlook, Apple Calendar and others. Includes the reminder.',
+      actionLink(icsUrl, 'download', 'Download calendar file (.ics)', !googleFits, { download: icsFileName(event) }),
+      ICS_NOTE,
     ),
   );
 
@@ -218,18 +238,19 @@ export function resultView(ctx: AppContext, id: string): View {
     h('div', { class: 'button-row' }, copyButton, shareButton),
   );
 
-  const warnings = notice
-    ? h(
-        'div',
-        { class: 'notice', role: 'note' },
-        icon('warning'),
-        h(
+  const warnings =
+    notice && notice.warnings.length > 0
+      ? h(
           'div',
-          null,
-          notice.warnings.map((w) => h('p', null, w)),
-        ),
-      )
-    : null;
+          { class: 'notice', role: 'note' },
+          icon('warning'),
+          h(
+            'div',
+            null,
+            notice.warnings.map((w) => h('p', null, w)),
+          ),
+        )
+      : null;
 
   const element = h(
     'div',

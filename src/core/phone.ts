@@ -282,8 +282,10 @@ function regionOf(tag: string, likely: boolean): CountryCode | undefined {
 }
 
 /**
- * Best-guess ISO region from navigator.languages (e.g. ['he-IL'] -> 'IL') and then the IANA time zone; fallback 'US'.
- * As a last resort before 'US', the likely region of a region-less language is used ('he' -> 'IL').
+ * Best-guess ISO region: the region of a known IANA time zone first ('Asia/Jerusalem' -> 'IL'), since the phone's
+ * zone says where the user's contacts are far more reliably than the UI language (many Israelis use an en-US or
+ * ru-RU phone); then the region of navigator.languages (e.g. ['he-IL'] -> 'IL'); then the likely region of a
+ * region-less language ('he' -> 'IL'); fallback 'US'.
  */
 export function detectDefaultCountry(languages: readonly string[], timeZone?: string): string {
   const tags = Array.isArray(languages) ? languages : [];
@@ -291,7 +293,7 @@ export function detectDefaultCountry(languages: readonly string[], timeZone?: st
     tags.map((tag) => regionOf(tag, likely)).find((region) => region !== undefined);
   const zoneRegion = timeZone ? ZONE_TO_REGION.get(timeZone) : undefined;
   const fromZone = zoneRegion && isSupportedCountry(zoneRegion) ? zoneRegion : undefined;
-  return fromTags(false) ?? fromZone ?? fromTags(true) ?? 'US';
+  return fromZone ?? fromTags(false) ?? fromTags(true) ?? 'US';
 }
 
 function regionNames(locale: string): Intl.DisplayNames {

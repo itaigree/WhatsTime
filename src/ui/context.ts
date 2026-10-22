@@ -14,8 +14,8 @@ export interface AppContext {
   prefill: Partial<ScheduledMessage> | null;
   /** The message created in this session, so its result page works even when storage is unavailable. */
   lastCreated: ScheduledMessage | null;
-  /** Warnings to show once on the result page right after creating message `id`. */
-  notice: { id: string; warnings: string[] } | null;
+  /** Warnings to show once on the result page right after creating message `id`; `phoneWarning` goes next to "To". */
+  notice: { id: string; warnings: string[]; phoneWarning?: string | undefined } | null;
   /** Go to a hash route; re-renders even when it is the current one. */
   navigate(hash: string): void;
   /** Short status text for the polite live region (toast). */

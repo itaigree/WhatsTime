@@ -6,12 +6,15 @@ import type { AppContext, View } from './context';
 import { h } from './dom';
 import { parseRoute } from './router';
 import type { Route } from './router';
+import { messageWithShared } from './share-target';
 import { composeView } from './views/compose';
 import { resultView } from './views/result';
 import { scheduledView } from './views/scheduled';
 import { settingsView } from './views/settings';
 
 const TOAST_MS = 2500;
+/** For messages that need reading, not just noticing. */
+const LONG_TOAST_MS = 6000;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 function required<T extends Element>(selector: string): T {
@@ -93,7 +96,7 @@ export function startApp(options: { sharedText: string | null }): void {
   document.querySelector('.brand-mark')?.appendChild(brandMark());
 
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
-  const announce = (message: string): void => {
+  const announce = (message: string, ms = TOAST_MS): void => {
     clearTimeout(toastTimer);
     toast.textContent = '';
     toast.classList.remove('show');
@@ -106,10 +109,16 @@ export function startApp(options: { sharedText: string | null }): void {
       toast.classList.remove('show');
       // Clear once faded out, so stale text is not found later when reading the page.
       toastTimer = setTimeout(() => (toast.textContent = ''), 300);
-    }, TOAST_MS);
+    }, ms);
   };
 
-  const store = createStore(safeLocalStorage());
+  // Writes fail silently in the store (quota, blocked storage); say so once, not on every keystroke.
+  let saveFailureShown = false;
+  const store = createStore(safeLocalStorage(), () => {
+    if (saveFailureShown) return;
+    saveFailureShown = true;
+    announce("Couldn't save on this device. Storage may be full or blocked.", LONG_TOAST_MS);
+  });
   const ctx: AppContext = {
     store,
     settings: store.loadSettings(defaultSettings()),
@@ -124,11 +133,14 @@ export function startApp(options: { sharedText: string | null }): void {
       if (window.location.hash === hash) render(true);
       else window.location.hash = hash;
     },
-    announce,
+    announce: (message) => announce(message),
   };
 
   if (options.sharedText !== null) {
-    ctx.prefill = { ...(store.loadDraft() ?? {}), message: options.sharedText };
+    const draft = store.loadDraft() ?? {};
+    const message = messageWithShared(draft.message, options.sharedText);
+    ctx.prefill = { ...draft, message };
+    if (message !== options.sharedText && message !== draft.message) announce('Shared text added below your draft');
   }
 
   let current: View | null = null;

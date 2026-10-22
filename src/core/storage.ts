@@ -7,7 +7,7 @@
 
 import { isValidDate, isValidTime } from './dates';
 import { MAX_REMINDER_MINUTES } from './event';
-import { WEEKDAYS, defaultRecurrence } from './recurrence';
+import { MAX_COUNT, MAX_INTERVAL, WEEKDAYS, defaultRecurrence } from './recurrence';
 import { isValidTimeZone } from './timezone';
 import type {
   Frequency,
@@ -71,7 +71,9 @@ const isString = (v: unknown): v is string => typeof v === 'string';
 const isNonEmptyString = (v: unknown): v is string => isString(v) && v.length > 0;
 const isIntInRange = (v: unknown, min: number, max: number): v is number =>
   Number.isInteger(v) && (v as number) >= min && (v as number) <= max;
-const isPositiveInt = (v: unknown): v is number => isIntInRange(v, 1, Number.MAX_SAFE_INTEGER);
+/** A whole number >= 1 capped at `max` (the validator's limit), or undefined. */
+const cappedPositiveInt = (v: unknown, max: number): number | undefined =>
+  Number.isInteger(v) && (v as number) >= 1 ? Math.min(v as number, max) : undefined;
 const isReminder = (v: unknown): v is number => isIntInRange(v, 0, MAX_REMINDER_MINUTES);
 const isDuration = (v: unknown): v is number => isIntInRange(v, 1, MAX_DURATION_MINUTES);
 const isCountry = (v: unknown): v is string => isString(v) && /^[A-Z]{2}$/.test(v);
@@ -118,7 +120,8 @@ function sanitizeStart(v: unknown, rules: FieldRules): LocalDateTime | undefined
 
 function sanitizeEnd(v: unknown): RecurrenceEnd {
   if (isRecord(v)) {
-    if (v.type === 'count' && isPositiveInt(v.count)) return { type: 'count', count: v.count };
+    const count = cappedPositiveInt(v.count, MAX_COUNT);
+    if (v.type === 'count' && count !== undefined) return { type: 'count', count };
     if (v.type === 'until' && isString(v.date) && isValidDate(v.date)) return { type: 'until', date: v.date };
   }
   return { type: 'never' };
@@ -129,15 +132,19 @@ function sanitizeWeekdays(v: unknown): Weekday[] {
   return WEEKDAYS.filter((day) => v.includes(day));
 }
 
-/** Any value -> a complete Recurrence; missing or invalid fields fall back to defaultRecurrence(). */
+/**
+ * Any value -> a complete Recurrence; missing or invalid fields fall back to defaultRecurrence(). An interval or
+ * count above the validator's limit is capped there, and an invalid weekStart is left out (Monday-start weeks).
+ */
 export function sanitizeRecurrence(v: unknown): Recurrence {
   const defaults = defaultRecurrence();
   if (!isRecord(v)) return defaults;
   return {
     frequency: oneOf(FREQUENCIES, v.frequency) ? v.frequency : defaults.frequency,
-    interval: isPositiveInt(v.interval) ? v.interval : defaults.interval,
+    interval: cappedPositiveInt(v.interval, MAX_INTERVAL) ?? defaults.interval,
     weekdays: sanitizeWeekdays(v.weekdays),
     monthlyMode: oneOf(MONTHLY_MODES, v.monthlyMode) ? v.monthlyMode : defaults.monthlyMode,
+    ...(oneOf(WEEKDAYS, v.weekStart) ? { weekStart: v.weekStart } : {}),
     end: sanitizeEnd(v.end),
   };
 }

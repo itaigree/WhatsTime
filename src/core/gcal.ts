@@ -75,15 +75,19 @@ function shortenedDetails(event: CalendarEvent, fits: (details: string) => boole
 /**
  * Google Calendar template link:
  * https://calendar.google.com/calendar/render?action=TEMPLATE&text=..&dates=<start>/<end>&ctz=<tz>
- *   &details=..&recur=RRULE:..
- * `recur` is present only when the event repeats. `details` is shortened when the link would otherwise exceed
- * GOOGLE_CALENDAR_URL_MAX_LENGTH, always keeping the wa.me link whole. Throws RangeError when the start date/time
- * is invalid.
+ *   &crm=AVAILABLE&trp=false&details=..&recur=RRULE:..
+ * crm (current) and trp (older) both mark the event 'Free', like TRANSP:TRANSPARENT in the .ics, so a reminder does
+ * not block the user's time. `recur` is present only when the event repeats. `details` is shortened when the link
+ * would otherwise exceed GOOGLE_CALENDAR_URL_MAX_LENGTH, always keeping the wa.me link whole. Throws RangeError when
+ * the start date/time is invalid.
  */
 export function buildGoogleCalendarUrl(event: CalendarEvent): string {
   const dates = datesParam(event);
   const build = (details: string): string => {
-    const params = new URLSearchParams({ action: 'TEMPLATE', text: event.title, dates, ctz: event.timeZone, details });
+    const params = new URLSearchParams({ action: 'TEMPLATE', text: event.title, dates, ctz: event.timeZone });
+    params.set('crm', 'AVAILABLE');
+    params.set('trp', 'false');
+    params.set('details', details);
     if (event.rrule) params.set('recur', `RRULE:${event.rrule}`);
     return `${GCAL_RENDER}?${params.toString()}`;
   };

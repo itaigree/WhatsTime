@@ -3,7 +3,7 @@
 
 // Bump the version when PRECACHE or the caching logic changes; old caches are removed on activate.
 const CACHE_PREFIX = 'whatstime-';
-const CACHE = `${CACHE_PREFIX}v1`;
+const CACHE = `${CACHE_PREFIX}v2`;
 const SHELL = './index.html';
 const NAV_TIMEOUT_MS = 3000;
 // crossorigin <script>/<link> requests carry an Origin header and some hosts answer with
@@ -60,8 +60,14 @@ self.addEventListener('fetch', (event) => {
 });
 
 // Navigations: network first; after NAV_TIMEOUT_MS or on failure, serve the cached app shell.
+// The query string is never sent on: a share-target launch carries the shared text there (./?text=…), and the app
+// reads it from the page URL. App-shell navigations fetch the shell itself; anything else its plain path.
 async function networkFirstNavigation(event) {
-  const network = fetchAndCache(event, event.request, isShellUrl(event.request.url) ? SHELL : null);
+  const shell = isShellUrl(event.request.url);
+  const url = shell ? new URL('./', self.registration.scope) : new URL(event.request.url);
+  url.search = '';
+  url.hash = '';
+  const network = fetchAndCache(event, url.href, shell ? SHELL : null).then(navigable);
   const timeout = new Promise((resolve) => setTimeout(resolve, NAV_TIMEOUT_MS, null));
   const fresh = await Promise.race([network.catch(() => null), timeout]);
   if (fresh) return fresh;
@@ -69,8 +75,12 @@ async function networkFirstNavigation(event) {
   const cache = await caches.open(CACHE);
   const cached = (await cache.match(SHELL, MATCH)) || (await cache.match('./', MATCH));
   if (!cached) return network;
-  // A redirected response cannot answer a navigation; re-wrap it if the host redirected index.html.
-  return cached.redirected ? new Response(cached.body, cached) : cached;
+  return navigable(cached);
+}
+
+// A redirected response cannot answer a navigation; re-wrap it (e.g. when the host redirected to index.html).
+function navigable(response) {
+  return response.redirected ? new Response(response.body, response) : response;
 }
 
 // Everything else: answer from the cache when possible and refresh it in the background.

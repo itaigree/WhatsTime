@@ -109,6 +109,8 @@ describe('Google Calendar link length', () => {
   function untrimmedLength(event: CalendarEvent): number {
     const params = new URLSearchParams({ action: 'TEMPLATE', text: event.title, dates: 'x'.repeat(31) });
     params.set('ctz', event.timeZone);
+    params.set('crm', 'AVAILABLE');
+    params.set('trp', 'false');
     params.set('details', event.description);
     if (event.rrule) params.set('recur', `RRULE:${event.rrule}`);
     return 'https://calendar.google.com/calendar/render?'.length + params.toString().length;

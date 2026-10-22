@@ -115,10 +115,12 @@ export function createRepeatSection(options: { region: string; onChange: () => v
     unitText,
   );
 
-  // Weekly: toggle buttons in the user's week order, plus a working-week shortcut.
+  // Weekly: toggle buttons in the user's week order, plus a working-week shortcut. The rule uses the same week
+  // start (WKST), so "every 2 weeks on Sun and Tue" pairs days the way the toggles show them.
+  const weekStart = firstDayOfWeek(userLanguage());
   const dayButtons = new Map<Weekday, HTMLButtonElement>();
   const daysHint = h('p', { class: 'hint', 'aria-live': 'polite' });
-  for (const day of weekStartingOn(firstDayOfWeek(userLanguage()))) {
+  for (const day of weekStartingOn(weekStart)) {
     dayButtons.set(
       day,
       h(
@@ -286,6 +288,7 @@ export function createRepeatSection(options: { region: string; onChange: () => v
       interval: numberValue(intervalInput),
       weekdays: freq === 'weekly' ? WEEKDAYS.filter((day) => selectedDays.has(day)) : [],
       monthlyMode,
+      ...(freq === 'weekly' && { weekStart }),
       end: end(),
     };
   }

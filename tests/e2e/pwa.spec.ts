@@ -113,6 +113,19 @@ test.describe('web app manifest', () => {
   });
 });
 
+/** Lets Playwright see (and route) the service worker's own fetches; read whenever a worker starts. */
+async function withServiceWorkerNetworkEvents(run: () => Promise<void>): Promise<void> {
+  const flag = 'PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS';
+  const previous = process.env[flag];
+  process.env[flag] = '1';
+  try {
+    await run();
+  } finally {
+    if (previous === undefined) delete process.env[flag];
+    else process.env[flag] = previous;
+  }
+}
+
 test.describe('service worker', () => {
   test('is served and everything it precaches resolves', async ({ request, baseURL }) => {
     const swUrl = siteUrl('sw.js', baseURL);
@@ -135,13 +148,9 @@ test.describe('service worker', () => {
   });
 
   test('takes control and serves the app shell offline', async ({ page, context, baseURL }) => {
-    // Without this flag Playwright neither routes nor takes offline the service worker's own
-    // fetches, so an "offline" check would quietly still reach the server. It is read whenever a
-    // service worker starts, so setting it here only affects this test.
-    const flag = 'PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS';
-    const previous = process.env[flag];
-    process.env[flag] = '1';
-    try {
+    // Without the flag Playwright neither routes nor takes offline the service worker's own
+    // fetches, so an "offline" check would quietly still reach the server.
+    await withServiceWorkerNetworkEvents(async () => {
       const root = siteUrl('./', baseURL);
       const online = await page.goto(root.href);
       expect(online?.status()).toBe(200);
@@ -198,9 +207,55 @@ test.describe('service worker', () => {
       expect(shared?.status()).toBe(200);
       expect(shared?.fromServiceWorker()).toBe(true);
       expect(await shared!.text()).toBe(shellHtml);
-    } finally {
-      if (previous === undefined) delete process.env[flag];
-      else process.env[flag] = previous;
-    }
+    });
+  });
+
+  test('a share-target launch never sends the shared text to the server or into the cache', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await withServiceWorkerNetworkEvents(async () => {
+      const root = siteUrl('./', baseURL);
+      await page.goto(root.href);
+      await page.evaluate(async () => {
+        await navigator.serviceWorker.register('sw.js');
+        await navigator.serviceWorker.ready;
+      });
+      await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+
+      const fromWorker: string[] = [];
+      context.on('request', (req) => {
+        if (req.serviceWorker()) fromWorker.push(req.url());
+      });
+      const shareUrl = siteUrl('./?title=Private&text=SECRET%20code%204411', baseURL);
+      const shared = await page.goto(shareUrl.href);
+      expect(shared?.status()).toBe(200);
+      expect(shared?.fromServiceWorker()).toBe(true);
+      await expect(page.getByLabel('Message', { exact: true })).toHaveValue('Private\nSECRET code 4411');
+
+      // The worker fetched the app shell itself, without the query.
+      await expect.poll(() => fromWorker).toContain(root.href);
+      expect(fromWorker.filter((url) => new URL(url).search !== '' || url.includes('SECRET'))).toEqual([]);
+
+      // The refreshed shell is cached under index.html with the plain URL, and nothing cached carries the query.
+      const shellUrl = () =>
+        page.evaluate(async () => {
+          const cache = await caches.open((await caches.keys()).find((n) => n.startsWith('whatstime-')) ?? '');
+          return (await cache.match('./index.html'))?.url ?? '';
+        });
+      await expect.poll(shellUrl).toBe(root.href);
+      const cachedUrls = await page.evaluate(async () => {
+        const urls: string[] = [];
+        for (const name of await caches.keys()) {
+          const cache = await caches.open(name);
+          for (const request of await cache.keys()) {
+            urls.push(request.url, (await cache.match(request))?.url ?? '');
+          }
+        }
+        return urls;
+      });
+      expect(cachedUrls.filter((url) => url.includes('?') || url.includes('SECRET'))).toEqual([]);
+    });
   });
 });

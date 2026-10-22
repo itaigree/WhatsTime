@@ -291,6 +291,12 @@ h1 {
   gap: 14px;
 }
 
+.stack-tight {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
 .stack > *,
 .field > * {
   min-width: 0;
@@ -413,7 +419,8 @@ html {
 
 /* Empty live regions stay in the accessibility tree (so later text is announced) but take no space. */
 .field-error:empty,
-.phone-preview:empty {
+.phone-preview:empty,
+.clock-note:empty {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -686,6 +693,10 @@ input[type='radio'] {
   margin-top: 12px;
 }
 
+.clock-note {
+  margin-top: 12px;
+}
+
 /* ---------- To ---------- */
 
 .card > .check {
@@ -757,6 +768,33 @@ input[type='radio'] {
   font-size: 0.875rem;
 }
 
+/* A doubtful phone number, a clock change, a link too long for Google: worth reading, not blocking. */
+.inline-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--warning-ink);
+  background: var(--warning-soft);
+  border-radius: 12px;
+}
+
+.inline-warning .icon {
+  margin-top: 1px;
+}
+
+.summary-list dd > .inline-warning {
+  margin-top: 6px;
+}
+
+.country-fix {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+
 .file-field {
   position: relative;
 }
@@ -769,6 +807,68 @@ input[type='radio'] {
 .recents {
   display: grid;
   gap: 8px;
+}
+
+/* A recent contact: the name selects it, the cross forgets it. Both are 44px touch targets in one pill. */
+.recent-chip {
+  display: inline-flex;
+  align-items: stretch;
+  max-width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+}
+
+.recent-chip:hover {
+  border-color: var(--accent);
+}
+
+.recent-chip > button {
+  min-height: 44px;
+  margin: 0;
+  font: inherit;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.recent-chip > button:hover {
+  background: var(--accent-soft);
+}
+
+.recent-chip > .chip-select {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  padding-block: 8px;
+  padding-inline: 16px 6px;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  border-start-start-radius: 999px;
+  border-end-start-radius: 999px;
+}
+
+.chip-select > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-chip > .chip-remove {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  padding: 0;
+  color: var(--muted);
+  border-start-end-radius: 999px;
+  border-end-end-radius: 999px;
+}
+
+.recent-chip > .chip-remove:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 
 .contact-card {

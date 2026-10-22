@@ -3,11 +3,11 @@
  * event with the wa.me link embedded.
  */
 
-import { isValidDate, isValidTime } from './dates';
+import { isValidDate, isValidTime, parseDate } from './dates';
 import { formatPhoneForDisplay } from './phone';
 import { alignStart, toRRule, validateRecurrence } from './recurrence';
-import { isValidTimeZone, zonedTimeToUtc } from './timezone';
-import type { CalendarEvent, ScheduledMessage } from './types';
+import { isValidTimeZone, wallTimeIssue, zonedTimeToUtc } from './timezone';
+import type { CalendarEvent, LocalDateTime, ScheduledMessage } from './types';
 import { buildWhatsAppLink } from './whatsapp';
 
 export const DEFAULT_DURATION_MINUTES = 15;
@@ -16,6 +16,9 @@ export const MAX_REMINDER_MINUTES = 4 * 7 * 24 * 60;
 export const LONG_LINK_THRESHOLD = 2000;
 
 const TITLE_SNIPPET_LENGTH = 40;
+/** Start years accepted; a typo such as 20260 or 0202 is caught, and dates stay far from year-10000 overflows. */
+const MIN_START_YEAR = 2000;
+const MAX_START_YEAR = 2199;
 
 export type MessageField = 'recipient' | 'message' | 'date' | 'time' | 'timeZone' | 'recurrence' | 'reminder' | 'duration';
 
@@ -67,9 +70,14 @@ export function eventDescription(msg: ScheduledMessage, link: string): string {
   ].join('\n');
 }
 
+/** The first occurrence: the start moved to the first date the repeat rule produces. */
+function firstStart(msg: ScheduledMessage): LocalDateTime {
+  return { date: alignStart(msg.recurrence, msg.start.date), time: msg.start.time };
+}
+
 export function toCalendarEvent(msg: ScheduledMessage, now: Date): CalendarEvent {
   const url = buildWhatsAppLink(msg.recipient.phone, msg.message);
-  const start = { date: alignStart(msg.recurrence, msg.start.date), time: msg.start.time };
+  const start = firstStart(msg);
   return {
     uid: `${msg.id}@whatstime`,
     title: eventTitle(msg),
@@ -86,8 +94,24 @@ export function toCalendarEvent(msg: ScheduledMessage, now: Date): CalendarEvent
 
 /** The instant the first reminder fires. */
 export function firstReminderAt(msg: ScheduledMessage): Date {
-  const start = { date: alignStart(msg.recurrence, msg.start.date), time: msg.start.time };
-  return new Date(zonedTimeToUtc(start, msg.timeZone).getTime() - msg.reminderMinutesBefore * 60_000);
+  return new Date(zonedTimeToUtc(firstStart(msg), msg.timeZone).getTime() - msg.reminderMinutesBefore * 60_000);
+}
+
+/** A note when the first start falls in a DST gap or in the repeated hour of a fall-back, else null. */
+function wallTimeWarning(msg: ScheduledMessage): string | null {
+  const { time } = msg.start;
+  const issue = wallTimeIssue(firstStart(msg), msg.timeZone);
+  if (issue?.kind === 'gap') {
+    return `${time} doesn't exist on that day because the clocks go forward. The reminder will be at ${issue.actual}.`;
+  }
+  if (issue?.kind === 'repeated') {
+    return `${time} happens twice on that day because the clocks go back. The first one (summer time) is used.`;
+  }
+  return null;
+}
+
+function isYearInRange(year: number): boolean {
+  return year >= MIN_START_YEAR && year <= MAX_START_YEAR;
 }
 
 export function validateScheduledMessage(msg: ScheduledMessage, now: Date): ValidationResult {
@@ -101,6 +125,7 @@ export function validateScheduledMessage(msg: ScheduledMessage, now: Date): Vali
     errors.push({ field: 'message', message: 'Write the message you want to send.' });
   }
   if (!isValidDate(msg.start.date)) errors.push({ field: 'date', message: 'Pick a date.' });
+  else if (!isYearInRange(parseDate(msg.start.date).year)) errors.push({ field: 'date', message: 'Check the year.' });
   if (!isValidTime(msg.start.time)) errors.push({ field: 'time', message: 'Pick a time.' });
   if (!isValidTimeZone(msg.timeZone)) errors.push({ field: 'timeZone', message: 'Unknown time zone.' });
   if (
@@ -125,6 +150,8 @@ export function validateScheduledMessage(msg: ScheduledMessage, now: Date): Vali
     if (msg.recurrence.frequency === 'none') errors.push(issue);
     else warnings.push({ ...issue, message: 'The first reminder is in the past; later repeats will still remind you.' });
   }
+  const wallTime = wallTimeWarning(msg);
+  if (wallTime) warnings.push({ field: 'time', message: wallTime });
   if (buildWhatsAppLink(msg.recipient.phone, msg.message).length > LONG_LINK_THRESHOLD) {
     warnings.push({ field: 'message', message: 'Very long messages may be cut off by some calendar apps.' });
   }

@@ -147,6 +147,7 @@ describe('buildIcs', () => {
         'URL:https://wa.me/972501234567?text=Happy%20birthday!',
         'TRANSP:TRANSPARENT',
         'STATUS:CONFIRMED',
+        'CLASS:PRIVATE',
         'SEQUENCE:0',
         'BEGIN:VALARM',
         'ACTION:DISPLAY',
@@ -190,6 +191,7 @@ describe('buildIcs', () => {
       'URL',
       'TRANSP',
       'STATUS',
+      'CLASS',
       'SEQUENCE',
       'BEGIN',
       'ACTION',
@@ -209,6 +211,7 @@ describe('buildIcs', () => {
     expect(parsed.vevent.getFirstPropertyValue('url')).toBe(LINK);
     expect(parsed.vevent.getFirstPropertyValue('transp')).toBe('TRANSPARENT');
     expect(parsed.vevent.getFirstPropertyValue('status')).toBe('CONFIRMED');
+    expect(parsed.vevent.getFirstPropertyValue('class')).toBe('PRIVATE');
     expect(parsed.vevent.getFirstPropertyValue('sequence')).toBe(0);
     expect(utcMs(parsed.vevent.getFirstPropertyValue('dtstamp') as IcalTime)).toBe(Date.UTC(2026, 9, 20, 8, 30, 15));
     expect(parsed.calendar.getFirstPropertyValue('prodid')).toBe('-//WhatsTime//Scheduled WhatsApp Reminder//EN');

@@ -5,10 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+# Nothing by default. The build job runs every dev dependency's code (npm ci, tests, build), so it only gets read
+# access; the Pages and OIDC scopes go to the deploy job alone, which runs no repository code.
+permissions: {}
 
 # One deployment at a time; let an in-progress deployment finish.
 concurrency:
@@ -19,8 +18,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
@@ -35,8 +38,6 @@ jobs:
       - name: Build
         run: npm run build
 
-      - uses: actions/configure-pages@v5
-
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
@@ -44,10 +45,17 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # Reads the Pages settings, which needs the Pages scope; it fails early if Pages is not set to GitHub Actions.
+      - uses: actions/configure-pages@v5
+
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4

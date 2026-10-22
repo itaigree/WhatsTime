@@ -3,14 +3,15 @@
  * or "I'll choose the chat in WhatsApp".
  */
 
-import { formatPhoneForDisplay, normalizePhone } from '../../core/phone';
+import { detectDefaultCountry, normalizePhone } from '../../core/phone';
 import type { PhoneResult } from '../../core/phone';
+import { getDeviceTimeZone } from '../../core/timezone';
 import type { Recipient, SavedContact } from '../../core/types';
 import { parseVCards } from '../../core/vcard';
 import type { VCardContact } from '../../core/vcard';
 import { isContactPickerSupported, pickContact } from '../contacts';
 import { h, setChildren, uid } from '../dom';
-import { countryInfo } from '../format';
+import { countryInfo, recipientLabel } from '../format';
 import { icon } from '../icons';
 import { errorSlot, field } from './field';
 import type { ErrorSlot } from './field';
@@ -35,8 +36,8 @@ interface Selection {
 
 export interface RecipientSection {
   readonly element: HTMLElement;
-  /** Shows any problem inline; returns the recipient, or the element to focus. */
-  validate(): { recipient: Recipient } | { invalid: HTMLElement };
+  /** Shows any problem inline; returns the recipient (with any doubt about its number), or the element to focus. */
+  validate(): { recipient: Recipient; warning?: string } | { invalid: HTMLElement };
   /** Show an error from the core validator; returns the element to focus. */
   showError(message: string): HTMLElement;
   clearErrors(): void;
@@ -45,9 +46,15 @@ export interface RecipientSection {
   set(recipient: Recipient | undefined): void;
 }
 
+export interface RecentContacts {
+  list(): readonly SavedContact[];
+  forget(contact: SavedContact): void;
+}
+
 export interface RecipientOptions {
   defaultCountry: string;
-  recentContacts: readonly SavedContact[];
+  /** Shown as chips, each with a remove button. */
+  recents: RecentContacts;
   onChange: () => void;
 }
 
@@ -75,13 +82,59 @@ function countryHint(country: string): (string | Node)[] {
   const info = countryInfo(country);
   const settingsLink = h('a', { href: '#/settings' }, 'Change in Settings');
   return info
-    ? [`Numbers without a country code use +${info.callingCode} (${info.name}). `, settingsLink, '.']
+    ? [`Numbers without a country code are read as +${info.callingCode} (${info.name}). `, settingsLink, '.']
     : ['Start with + and the country code, or set your country. ', settingsLink, '.'];
+}
+
+/** Written without a country code, so the default country decided how the number reads. */
+const lacksCountryCode = (raw: string): boolean => !raw.includes('+');
+
+/** Unusable, or usable with a warning. */
+const isDoubtful = (choice: NumberChoice): boolean => !choice.result.ok || choice.result.warning !== undefined;
+
+/** The country of the device's time zone when it is not the default one (e.g. Israel, after a trip abroad changed it). */
+function zoneCountry(defaultCountry: string): string | undefined {
+  const fromZone = detectDefaultCountry([], getDeviceTimeZone());
+  // For a zone it does not know, detectDefaultCountry returns its fixed fallback; only a real match counts.
+  const fallback = detectDefaultCountry([], '');
+  return fromZone !== defaultCountry && fromZone !== fallback ? fromZone : undefined;
+}
+
+/**
+ * The choices with each doubtful number that has no country code read in `country` instead, where that gives a
+ * clean reading; null when it improves none of them.
+ */
+function rereadChoices(choices: readonly NumberChoice[], country: string): NumberChoice[] | null {
+  const seen = new Set(choices.flatMap((c) => (c.result.ok && !c.result.warning ? [c.result.digits] : [])));
+  let improved = false;
+  const next: NumberChoice[] = [];
+  for (const choice of choices) {
+    const result = isDoubtful(choice) && lacksCountryCode(choice.raw) ? normalizePhone(choice.raw, country) : null;
+    if (!result?.ok || result.warning) {
+      next.push(choice);
+    } else if (!seen.has(result.digits)) {
+      // (A number already listed with its country code is dropped instead of shown twice.)
+      seen.add(result.digits);
+      improved = true;
+      next.push({ ...choice, result });
+    }
+  }
+  return improved ? next : null;
+}
+
+/** Why the selected contact cannot be used, or null when one of its numbers can. */
+function selectionProblem(sel: Selection): string | null {
+  if (sel.choices.some((choice) => choice.result.ok)) return null;
+  const [only] = sel.choices;
+  return sel.choices.length === 1 && only && !only.result.ok
+    ? `This number can't be used: ${only.result.error}`
+    : 'None of these numbers can be used. Choose another contact or enter the number.';
 }
 
 export function createRecipientSection(options: RecipientOptions): RecipientSection {
   const { defaultCountry, onChange } = options;
   const supported = isContactPickerSupported();
+  const altCountry = zoneCountry(defaultCountry);
   let selection: Selection | null = null;
   let picking = false;
   let cardError: ErrorSlot | null = null;
@@ -145,32 +198,60 @@ export function createRecipientSection(options: RecipientOptions): RecipientSect
   const vcfError = errorSlot({ live: true });
   const vcfPicker = h('div', { class: 'vcf-picker', hidden: true });
 
-  const recents = options.recentContacts.slice(0, MAX_RECENTS);
   const recentsTitleId = uid('recent');
-  const recentsBlock =
-    recents.length > 0
-      ? h(
-          'div',
-          { class: 'recents' },
-          h('p', { class: 'subhead', id: recentsTitleId }, 'Recent'),
+  const recentChips = h('div', { class: 'chips', role: 'group', 'aria-labelledby': recentsTitleId });
+  const recentsBlock = h(
+    'div',
+    { class: 'recents' },
+    h('p', { class: 'subhead', id: recentsTitleId }, 'Recent'),
+    recentChips,
+  );
+
+  /** (Re)builds the chips from storage; returns their remove buttons in order. */
+  function renderRecents(): HTMLButtonElement[] {
+    const recents = options.recents.list().slice(0, MAX_RECENTS);
+    const removeButtons: HTMLButtonElement[] = [];
+    recentsBlock.hidden = recents.length === 0;
+    recentChips.replaceChildren(
+      ...recents.map((contact, index) => {
+        const label = recipientLabel(contact);
+        const remove = h(
+          'button',
+          {
+            type: 'button',
+            class: 'chip-remove',
+            'aria-label': `Remove ${label} from recent contacts`,
+            onClick: () => forgetRecent(contact, index),
+          },
+          icon('close', 18),
+        );
+        removeButtons.push(remove);
+        return h(
+          'span',
+          { class: 'recent-chip' },
           h(
-            'div',
-            { class: 'chips', role: 'group', 'aria-labelledby': recentsTitleId },
-            recents.map((contact) =>
-              h(
-                'button',
-                {
-                  type: 'button',
-                  class: 'chip',
-                  onClick: () =>
-                    selectContact({ name: contact.name, phones: [{ value: `+${contact.phone}`, label: '' }] }),
-                },
-                h('span', { dir: 'auto' }, contact.name || formatPhoneForDisplay(contact.phone)),
-              ),
-            ),
+            'button',
+            {
+              type: 'button',
+              class: 'chip-select',
+              onClick: () => selectContact({ name: contact.name, phones: [{ value: `+${contact.phone}`, label: '' }] }),
+            },
+            h('span', { dir: 'auto' }, label),
           ),
-        )
-      : null;
+          remove,
+        );
+      }),
+    );
+    return removeButtons;
+  }
+
+  function forgetRecent(contact: SavedContact, index: number): void {
+    options.recents.forget(contact);
+    const removeButtons = renderRecents();
+    // Stay in the list (next chip, else the previous one) so several can be removed in a row.
+    (removeButtons[index] ?? removeButtons[index - 1] ?? pickButton ?? phoneInput).focus();
+  }
+  renderRecents();
 
   const chooser = h(
     'div',
@@ -215,17 +296,19 @@ export function createRecipientSection(options: RecipientOptions): RecipientSect
     cardError = errorSlot();
     const only = sel.choices.length === 1 ? sel.choices[0] : undefined;
     const display = only?.result.ok ? only.result.international : only?.raw;
+    const warning = only?.result.ok ? only.result.warning : undefined;
     const primary = sel.name || display || 'No name';
     const secondary = sel.name ? display : undefined;
     const card = h('div', { class: 'contact-card' });
     const textId = uid('contact');
+    const warningId = uid('contact-warning');
     const change = h(
       'button',
       {
         type: 'button',
         class: 'btn btn-text',
         'aria-label': 'Change recipient',
-        'aria-describedby': textId,
+        'aria-describedby': warning ? `${textId} ${warningId}` : textId,
         onClick: () => {
           selection = null;
           clearErrors();
@@ -250,6 +333,10 @@ export function createRecipientSection(options: RecipientOptions): RecipientSect
         change,
       ),
     );
+    // A doubtful reading is used, so say so under the number.
+    if (warning) {
+      card.append(h('p', { class: 'inline-warning', id: warningId }, icon('warning', 18), h('span', null, warning)));
+    }
     cardFocusTarget = change;
 
     if (sel.choices.length > 1) {
@@ -303,9 +390,45 @@ export function createRecipientSection(options: RecipientOptions): RecipientSect
     } else {
       card.append(cardError.element);
       groupRef = null;
-      if (only && !only.result.ok) cardError.show(`This number can't be used: ${only.result.error}`, [change]);
+      const problem = selectionProblem(sel);
+      if (problem) cardError.show(problem, [change]);
     }
+    const fix = countryFix(sel);
+    if (fix) card.append(fix);
     return card;
+  }
+
+  /**
+   * Under numbers the default country made unusable or doubtful: which country that is, and a one-tap re-read
+   * in the time zone's country when that gives clean readings.
+   */
+  function countryFix(sel: Selection): HTMLElement | null {
+    if (!sel.choices.some((choice) => isDoubtful(choice) && lacksCountryCode(choice.raw))) return null;
+    const reread = altCountry ? rereadChoices(sel.choices, altCountry) : null;
+    const info = altCountry ? countryInfo(altCountry) : undefined;
+    const button =
+      reread && info
+        ? h(
+            'button',
+            { type: 'button', class: 'btn btn-secondary btn-small', onClick: () => useChoices(sel, reread) },
+            `Read as ${info.name} (+${info.callingCode})`,
+          )
+        : null;
+    return h('div', { class: 'country-fix' }, h('p', { class: 'hint' }, countryHint(defaultCountry)), button);
+  }
+
+  /** Swap in re-read numbers, keeping the chosen one when it is still there. */
+  function useChoices(sel: Selection, choices: NumberChoice[]): void {
+    const before = sel.choices[sel.chosen]?.result;
+    const chosenDigits = before?.ok && !before.warning ? before.digits : undefined;
+    const valid = choices.flatMap((choice, index) => (choice.result.ok ? [index] : []));
+    const kept = choices.findIndex((choice) => choice.result.ok && choice.result.digits === chosenDigits);
+    sel.choices = choices;
+    sel.chosen = kept >= 0 ? kept : valid.length === 1 ? (valid[0] ?? -1) : -1;
+    clearErrors();
+    render();
+    onChange();
+    cardFocusTarget?.focus();
   }
 
   function selectContact(contact: VCardContact, moveFocus = true): void {
@@ -454,23 +577,30 @@ export function createRecipientSection(options: RecipientOptions): RecipientSect
     cardError?.clear();
   }
 
-  function validate(): { recipient: Recipient } | { invalid: HTMLElement } {
+  function validate(): { recipient: Recipient; warning?: string } | { invalid: HTMLElement } {
     clearErrors();
     if (chooseInApp.checked) return { recipient: { name: '', phone: '' } };
 
     if (selection) {
       const choice = selection.choices[selection.chosen];
-      if (choice?.result.ok) return { recipient: { name: selection.name, phone: choice.result.digits } };
-      const target = groupRef?.firstEnabled ?? cardFocusTarget ?? element;
-      if (groupRef?.firstEnabled) cardError?.show('Choose which number to use.', [groupRef.group]);
-      else
-        cardError?.show("This contact's number can't be used. Choose another contact or enter the number.", [target]);
+      if (choice?.result.ok) {
+        return { recipient: { name: selection.name, phone: choice.result.digits }, warning: choice.result.warning };
+      }
+      if (groupRef?.firstEnabled) {
+        cardError?.show('Choose which number to use.', [groupRef.group]);
+        return { invalid: groupRef.firstEnabled };
+      }
+      // Keep the specific reason (and the country hint below it) rather than a generic message.
+      const target = cardFocusTarget ?? element;
+      cardError?.show(selectionProblem(selection) ?? "This contact's number can't be used.", [target]);
       return { invalid: target };
     }
 
     if (phoneInput.value.trim()) {
       const result = checkPhone(true);
-      if (result?.ok) return { recipient: { name: nameInput.value.trim(), phone: result.digits } };
+      if (result?.ok) {
+        return { recipient: { name: nameInput.value.trim(), phone: result.digits }, warning: result.warning };
+      }
       if (manualDisclosure) manualDisclosure.open = true;
       return { invalid: phoneInput };
     }

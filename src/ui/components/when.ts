@@ -1,10 +1,11 @@
 /** The "When" card: date + time inputs, quick picks and the time-zone line. */
 
 import { addDays, formatTime, isValidDate, isValidTime, isoWeekdayIndex } from '../../core/dates';
-import { formatOffset, offsetMinutesAt, utcToZoned, zonedTimeToUtc } from '../../core/timezone';
+import { formatOffset, offsetMinutesAt, utcToZoned, wallTimeIssue, zonedTimeToUtc } from '../../core/timezone';
 import type { LocalDateTime } from '../../core/types';
-import { h, uid } from '../dom';
-import { timeLabel } from '../format';
+import { addIdRef, h, setChildren, uid } from '../dom';
+import { dateLabel, timeLabel } from '../format';
+import { icon } from '../icons';
 import { errorSlot, field } from './field';
 
 export interface WhenSection {
@@ -29,6 +30,17 @@ export function isFuture(value: LocalDateTime, now: Date, timeZone: string): boo
   return (
     isValidDate(value.date) && isValidTime(value.time) && zonedTimeToUtc(value, timeZone).getTime() > now.getTime()
   );
+}
+
+/** Non-blocking note when a clock change skips or repeats the chosen time, else null. */
+function clockChangeNote(value: LocalDateTime, timeZone: string): string | null {
+  const issue = wallTimeIssue(value, timeZone);
+  if (!issue) return null;
+  const time = timeLabel(value.time);
+  const date = dateLabel(value.date);
+  return issue.kind === 'gap'
+    ? `${time} doesn't exist on ${date} (clocks go forward); ${timeLabel(issue.actual)} is used instead.`
+    : `${time} happens twice on ${date} (clocks go back); the first one is used.`;
 }
 
 interface QuickPick {
@@ -71,6 +83,8 @@ export function createWhenSection(options: { timeZone: string; onChange: () => v
   const timeField = field({ label: 'Time', control: timeInput });
   const error = errorSlot();
   const zoneLine = h('p', { class: 'hint zone-line' });
+  const clockNote = h('p', { class: 'clock-note inline-warning', id: uid('clock'), 'aria-live': 'polite' });
+  addIdRef(timeInput, 'aria-describedby', clockNote.id);
 
   const changed = (): void => {
     error.clear();
@@ -87,6 +101,7 @@ export function createWhenSection(options: { timeZone: string; onChange: () => v
     { class: 'card', 'aria-labelledby': titleId },
     h('h2', { class: 'card-title', id: titleId }, 'When'),
     h('div', { class: 'grid-2' }, dateField.element, timeField.element),
+    clockNote,
     error.element,
     h('p', { class: 'visually-hidden', id: picksLabelId }, 'Quick picks'),
     h(
@@ -113,8 +128,14 @@ export function createWhenSection(options: { timeZone: string; onChange: () => v
 
   function updateZone(): void {
     const value = get();
-    const at = isValidDate(value.date) && isValidTime(value.time) ? zonedTimeToUtc(value, timeZone) : new Date();
+    const valid = isValidDate(value.date) && isValidTime(value.time);
+    const at = valid ? zonedTimeToUtc(value, timeZone) : new Date();
     zoneLine.textContent = `Time zone: ${timeZone} (${formatOffset(offsetMinutesAt(timeZone, at.getTime()))})`;
+    const note = valid ? clockChangeNote(value, timeZone) : null;
+    if (note !== (clockNote.textContent || null)) {
+      if (note) setChildren(clockNote, icon('warning', 18), h('span', null, note));
+      else clockNote.replaceChildren();
+    }
   }
 
   function get(): LocalDateTime {

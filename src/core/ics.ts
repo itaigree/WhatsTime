@@ -104,6 +104,8 @@ function eventLines(event: CalendarEvent, utc: boolean): string[] {
     ...(event.url ? [`URL:${event.url.replace(/[\x00-\x1F\x7F]/g, '')}`] : []),
     'TRANSP:TRANSPARENT',
     'STATUS:CONFIRMED',
+    // Keeps the recipient and message hidden from people who can see the user's calendar.
+    'CLASS:PRIVATE',
     'SEQUENCE:0',
     'BEGIN:VALARM',
     'ACTION:DISPLAY',
