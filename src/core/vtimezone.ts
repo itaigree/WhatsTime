@@ -142,7 +142,7 @@ function yearlyRules(
       continue;
     }
     const { month, weekday } = first.local;
-    let rrule = `RRULE:FREQ=YEARLY;BYMONTH=${month};BYDAY=${WEEKDAY_CODES[weekday]};BYMONTHDAY=${windowDays(windowStart).join(',')}`;
+    let rrule = `RRULE:FREQ=YEARLY;BYMONTH=${month};${dayRule(WEEKDAY_CODES[weekday] as string, month, windowStart)}`;
     if (!continues) rrule += `;UNTIL=${formatUtc(last.utc)}`;
     observances.push(observance(first, [rrule]));
   }
@@ -248,6 +248,19 @@ function ruleHolds(tzid: string, sample: Transition, windowStart: number, year: 
   if (day === undefined) return false;
   const utc = Date.UTC(year, month - 1, day, hour, minute, second) - sample.from * MINUTE;
   return offsetMinutesAt(tzid, utc - MINUTE) === sample.from && offsetMinutesAt(tzid, utc) === sample.to;
+}
+
+/**
+ * 'BYDAY=2SU' / 'BYDAY=-1SU' when the 7-day window is a whole week of the month (the only form some clients,
+ * notably Outlook, understand), else the general 'BYDAY=FR;BYMONTHDAY=23,...,29' form (e.g. Israel's
+ * "Friday before the last Sunday of March").
+ */
+function dayRule(weekday: string, month: number, windowStart: number): string {
+  const nth = [1, 8, 15, 22].indexOf(windowStart) + 1;
+  if (nth > 0) return `BYDAY=${nth}${weekday}`;
+  // February's length varies, so its last week is not a fixed window.
+  if (month !== 2 && windowStart === daysInMonth(2001, month) - 6) return `BYDAY=-1${weekday}`;
+  return `BYDAY=${weekday};BYMONTHDAY=${windowDays(windowStart).join(',')}`;
 }
 
 function windowDays(start: number): number[] {

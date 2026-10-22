@@ -230,7 +230,7 @@ describe('buildVTimezone output', () => {
       'DTSTART:20251026T020000',
       'TZOFFSETFROM:+0300',
       'TZOFFSETTO:+0200',
-      'RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=SU;BYMONTHDAY=25,26,27,28,29,30,31',
+      'RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU',
       'END:STANDARD',
       'END:VTIMEZONE',
     ]);
@@ -244,13 +244,13 @@ describe('buildVTimezone output', () => {
       'DTSTART:20250309T020000',
       'TZOFFSETFROM:-0500',
       'TZOFFSETTO:-0400',
-      'RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=SU;BYMONTHDAY=8,9,10,11,12,13,14',
+      'RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU',
       'END:DAYLIGHT',
       'BEGIN:STANDARD',
       'DTSTART:20251102T020000',
       'TZOFFSETFROM:-0400',
       'TZOFFSETTO:-0500',
-      'RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=SU;BYMONTHDAY=1,2,3,4,5,6,7',
+      'RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU',
       'END:STANDARD',
       'END:VTIMEZONE',
     ]);
@@ -271,7 +271,7 @@ describe('buildVTimezone output', () => {
         'DTSTART:20250406T020000',
         'TZOFFSETFROM:+1100',
         'TZOFFSETTO:+1030',
-        'RRULE:FREQ=YEARLY;BYMONTH=4;BYDAY=SU;BYMONTHDAY=1,2,3,4,5,6,7',
+        'RRULE:FREQ=YEARLY;BYMONTH=4;BYDAY=1SU',
         'END:STANDARD',
       ],
       [
@@ -279,7 +279,7 @@ describe('buildVTimezone output', () => {
         'DTSTART:20251005T020000',
         'TZOFFSETFROM:+1030',
         'TZOFFSETTO:+1100',
-        'RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=SU;BYMONTHDAY=1,2,3,4,5,6,7',
+        'RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=1SU',
         'END:DAYLIGHT',
       ],
     ]);
@@ -307,7 +307,7 @@ describe('buildVTimezone output', () => {
     for (const year of [2026, 2027, 2028, 2029, 2030, 2031, 2032]) {
       const lines = buildVTimezone('Asia/Jerusalem', year, year);
       expect(lines).toContain('RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=FR;BYMONTHDAY=23,24,25,26,27,28,29');
-      expect(lines).toContain('RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=SU;BYMONTHDAY=25,26,27,28,29,30,31');
+      expect(lines).toContain('RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU');
     }
   });
 
@@ -339,7 +339,7 @@ describe('buildVTimezone output', () => {
       'DTSTART:20170219T000000',
       'TZOFFSETFROM:-0200',
       'TZOFFSETTO:-0300',
-      'RRULE:FREQ=YEARLY;BYMONTH=2;BYDAY=SU;BYMONTHDAY=15,16,17,18,19,20,21;UNTIL=20190217T020000Z',
+      'RRULE:FREQ=YEARLY;BYMONTH=2;BYDAY=3SU;UNTIL=20190217T020000Z',
       'END:STANDARD',
       'BEGIN:DAYLIGHT',
       'DTSTART:20171015T000000',
@@ -414,7 +414,7 @@ describe('buildVTimezone output', () => {
       expect(lines[lines.length - 1]).toBe('END:VTIMEZONE');
       for (const line of lines.slice(2, -1)) {
         expect(line).toMatch(
-          /^(BEGIN|END):(STANDARD|DAYLIGHT)$|^(DTSTART|RDATE):\d{8}T\d{6}$|^TZOFFSET(FROM|TO):[+-]\d{4}$|^RRULE:FREQ=YEARLY;BYMONTH=\d{1,2};BYDAY=(MO|TU|WE|TH|FR|SA|SU);BYMONTHDAY=(\d{1,2},){6}\d{1,2}(;UNTIL=\d{8}T\d{6}Z)?$/,
+          /^(BEGIN|END):(STANDARD|DAYLIGHT)$|^(DTSTART|RDATE):\d{8}T\d{6}$|^TZOFFSET(FROM|TO):[+-]\d{4}$|^RRULE:FREQ=YEARLY;BYMONTH=\d{1,2};BYDAY=(-1|[1-4])?(MO|TU|WE|TH|FR|SA|SU)(;BYMONTHDAY=(\d{1,2},){6}\d{1,2})?(;UNTIL=\d{8}T\d{6}Z)?$/,
         );
       }
     }
