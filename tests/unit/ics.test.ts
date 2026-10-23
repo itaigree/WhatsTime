@@ -254,11 +254,10 @@ describe('buildIcs', () => {
     expect(vtimezone(casablanca)).toEqual(buildVTimezone('Africa/Casablanca', 2027, 2037));
     const until2045 = { ...casablanca, rrule: 'FREQ=YEARLY;UNTIL=20450110T085959Z' };
     expect(vtimezone(until2045)).toEqual(buildVTimezone('Africa/Casablanca', 2027, 2045));
-    const rdateYears = (lines: string[]) => lines.filter((l) => l.startsWith('RDATE:')).map((l) => Number(l.slice(6, 10)));
-    expect(Math.max(...rdateYears(vtimezone(until2045)))).toBe(2045);
-    // A far-away UNTIL is capped at 50 years after the start (Casablanca has listed changes until 2087).
+    // A far-away UNTIL is capped at 50 years after the start. (Which years actually carry Casablanca changes is a
+    // tzdata prediction that differs between releases, so the ranges are compared rather than RDATE years.)
     const until2199 = { ...casablanca, rrule: 'FREQ=YEARLY;UNTIL=21991231T225959Z' };
-    expect(Math.max(...rdateYears(vtimezone(until2199)))).toBe(2077);
+    expect(vtimezone(until2199)).toEqual(buildVTimezone('Africa/Casablanca', 2027, 2077));
   });
 
   it('omits the VTIMEZONE and writes UTC times for UTC and its aliases', () => {

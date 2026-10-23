@@ -148,8 +148,11 @@ interface ZoneCase {
   tzid: string;
   /** Yearly rules continue past the range, so the VTIMEZONE must keep agreeing with Intl after toYear. */
   regular: boolean;
-  /** Offset changes from 2026 through 2036. */
-  changes: number;
+  /**
+   * Offset changes from 2026 through 2036, or undefined for zones whose future changes are predictions that differ
+   * between tzdata releases (then the count comes from the runtime's own data).
+   */
+  changes?: number;
 }
 
 const ZONES: ZoneCase[] = [
@@ -168,8 +171,8 @@ const ZONES: ZoneCase[] = [
   { tzid: 'America/Sao_Paulo', regular: true, changes: 0 },
   { tzid: 'UTC', regular: true, changes: 0 },
   { tzid: 'Etc/GMT-3', regular: true, changes: 0 },
-  // Ramadan starts twice in 2029 and ends twice in 2033.
-  { tzid: 'Africa/Casablanca', regular: false, changes: 24 },
+  // Ramadan-dependent; tzdata releases disagree on the predicted changes, so the count is taken from Intl.
+  { tzid: 'Africa/Casablanca', regular: false },
 ];
 
 describe('buildVTimezone agrees with Intl when parsed by ical.js', () => {
@@ -183,7 +186,7 @@ describe('buildVTimezone agrees with Intl when parsed by ical.js', () => {
 
       it('matches just before, at and after every transition', () => {
         const locals = localsAroundTransitions(tzid, FROM, TO);
-        expect(locals.length).toBe(changes * 7);
+        expect(locals.length).toBe((changes ?? transitionInstants(tzid, FROM, TO).length) * 7);
         expect(disagreements(zone, tzid, locals)).toEqual([]);
       });
 
@@ -361,12 +364,18 @@ describe('buildVTimezone output', () => {
       ['BEGIN:DAYLIGHT', 'DTSTART:20250406T020000', 'TZOFFSETFROM:+0000', 'TZOFFSETTO:+0100'],
     ]);
     const rdates = lines.filter((l) => l.startsWith('RDATE:'));
-    // Every change from 2025 through 2036 (two in 2029 and 2033, when Ramadan starts twice in one year).
-    expect(rdates).toHaveLength(transitionInstants('Africa/Casablanca', 2025, 2036).length);
+    // One RDATE per change from 2025 through 2036, each at the wall time just before the change. Future Ramadan
+    // changes are predictions that differ between tzdata releases, so the list comes from the runtime's data.
+    const expected = transitionInstants('Africa/Casablanca', 2025, 2036).map((t) => {
+      const { date, time } = utcToZoned(new Date(t - MINUTE), 'Africa/Casablanca');
+      const [h, m] = time.split(':').map(Number) as [number, number];
+      const minutes = h * 60 + m + 1;
+      return `RDATE:${date.replaceAll('-', '')}T${String(Math.floor(minutes / 60) % 24).padStart(2, '0')}${String(minutes % 60).padStart(2, '0')}00`;
+    });
+    expect([...rdates].sort()).toEqual([...expected].sort());
     expect(rdates).toContain('RDATE:20250223T030000');
     expect(rdates).toContain('RDATE:20260215T030000');
     expect(rdates).toContain('RDATE:20260322T020000');
-    expect(rdates).toContain('RDATE:20361123T020000');
     expect(rdates.every((l) => /^RDATE:\d{8}T\d{6}$/.test(l))).toBe(true);
   });
 
