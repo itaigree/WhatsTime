@@ -8,14 +8,10 @@ import { h, uid } from '../dom';
 import { DURATION_OPTIONS, REMINDER_OPTIONS, countryList } from '../format';
 import { icon } from '../icons';
 
-function card(title: string, ...children: (Node | null)[]): HTMLElement {
-  const titleId = uid('settings');
-  return h(
-    'section',
-    { class: 'card', 'aria-labelledby': titleId },
-    h('h2', { class: 'card-title', id: titleId }, title),
-    ...children,
-  );
+/** A titled card; the title can take focus (tabindex -1) for when the control that had it goes away. */
+function card(title: string, ...children: (Node | null)[]): { element: HTMLElement; title: HTMLElement } {
+  const titleEl = h('h2', { class: 'card-title', id: uid('settings'), tabindex: -1 }, title);
+  return { element: h('section', { class: 'card', 'aria-labelledby': titleEl.id }, titleEl, ...children), title: titleEl };
 }
 
 export function settingsView(ctx: AppContext): View {
@@ -58,6 +54,8 @@ export function settingsView(ctx: AppContext): View {
         if (!ok) return;
         ctx.store.clearHistory();
         updateCounts();
+        // The button is now disabled, which would drop focus to the page; keep it in this card instead.
+        historyCard.title.focus();
         ctx.announce('Scheduled list cleared');
       },
     },
@@ -81,6 +79,7 @@ export function settingsView(ctx: AppContext): View {
         if (!ok) return;
         ctx.store.clearRecentContacts();
         updateCounts();
+        contactsCard.title.focus();
         ctx.announce('Recent contacts cleared');
       },
     },
@@ -103,6 +102,8 @@ export function settingsView(ctx: AppContext): View {
     clearContactsButton.disabled = contacts === 0;
   }
   updateCounts();
+  const historyCard = card('Scheduled list', historyCount, clearButton);
+  const contactsCard = card('Recent contacts', contactsCount, clearContactsButton);
 
   const element = h(
     'div',
@@ -121,9 +122,9 @@ export function settingsView(ctx: AppContext): View {
         field({ label: 'Default reminder', control: reminderSelect }).element,
         field({ label: 'Event length', control: durationSelect, hint: 'How long the calendar event lasts.' }).element,
       ),
-    ),
-    card('Scheduled list', historyCount, clearButton),
-    card('Recent contacts', contactsCount, clearContactsButton),
+    ).element,
+    historyCard.element,
+    contactsCard.element,
     card(
       'How it works',
       h(
@@ -139,7 +140,7 @@ export function settingsView(ctx: AppContext): View {
         { class: 'muted' },
         'The link is a standard WhatsApp click-to-chat (wa.me) link. A web app cannot send messages for you, so your calendar does the reminding.',
       ),
-    ),
+    ).element,
     card(
       'Privacy',
       h(
@@ -161,7 +162,7 @@ export function settingsView(ctx: AppContext): View {
           ),
         ),
       ),
-    ),
+    ).element,
   );
 
   return { title: 'Settings', element, heading };

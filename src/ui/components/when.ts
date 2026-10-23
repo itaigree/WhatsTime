@@ -1,10 +1,11 @@
 /** The "When" card: date + time inputs, quick picks and the time-zone line. */
 
 import { addDays, formatTime, isValidDate, isValidTime, isoWeekdayIndex } from '../../core/dates';
+import { LATEST_UNTIL_DATE } from '../../core/recurrence';
 import { formatOffset, offsetMinutesAt, utcToZoned, wallTimeIssue, zonedTimeToUtc } from '../../core/timezone';
 import type { LocalDateTime } from '../../core/types';
 import { addIdRef, h, setChildren, uid } from '../dom';
-import { dateLabel, timeLabel } from '../format';
+import { dateLabel, dayTimeLabel, timeLabel } from '../format';
 import { icon } from '../icons';
 import { errorSlot, field } from './field';
 
@@ -16,6 +17,10 @@ export interface WhenSection {
   showError(message: string, fields: readonly ('date' | 'time')[]): HTMLElement;
   clearErrors(): void;
 }
+
+/** The core accepts start years 2000-2199; the date inputs say so too, so pickers don't offer year 20260. */
+export const EARLIEST_START_DATE = '2000-01-01';
+export const LATEST_DATE = LATEST_UNTIL_DATE;
 
 /** Next full hour today, or tomorrow 09:00 when that would be after 22:00. */
 export function defaultStart(now: Date, timeZone: string): LocalDateTime {
@@ -75,9 +80,19 @@ function quickPicks(timeZone: string): QuickPick[] {
   return picks;
 }
 
-export function createWhenSection(options: { timeZone: string; onChange: () => void }): WhenSection {
-  const { timeZone, onChange } = options;
-  const dateInput = h('input', { type: 'date', required: true, min: utcToZoned(new Date(), timeZone).date });
+export function createWhenSection(options: {
+  timeZone: string;
+  onChange: () => void;
+  /** Says what a quick pick set, for screen readers (the inputs change without focus moving). */
+  announce: (message: string) => void;
+}): WhenSection {
+  const { timeZone, onChange, announce } = options;
+  const dateInput = h('input', {
+    type: 'date',
+    required: true,
+    min: utcToZoned(new Date(), timeZone).date,
+    max: LATEST_DATE,
+  });
   const timeInput = h('input', { type: 'time', required: true });
   const dateField = field({ label: 'Date', control: dateInput });
   const timeField = field({ label: 'Time', control: timeInput });
@@ -114,9 +129,11 @@ export function createWhenSection(options: { timeZone: string; onChange: () => v
             type: 'button',
             class: 'chip',
             onClick: () => {
-              set(pick.value());
+              const value = pick.value();
+              set(value);
               error.clear();
               onChange();
+              announce(`Set to ${dayTimeLabel(value)}`);
             },
           },
           pick.label,

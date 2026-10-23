@@ -54,32 +54,42 @@ export interface Field {
   readonly element: HTMLElement;
   readonly label: HTMLLabelElement;
   readonly error: ErrorSlot;
+  /** The h2 around the label when `heading` is set (for the card's aria-labelledby), else null. */
+  readonly heading: HTMLHeadingElement | null;
 }
 
 export interface FieldOptions {
   label: Child | readonly Child[];
   control: Control;
   hint?: Child | readonly Child[];
-  /** Extra class on the label, e.g. 'card-title' when the label doubles as the card heading. */
+  /** Extra class on the label. */
   labelClass?: string;
+  /** The label doubles as the card's title: it is wrapped in an h2 so the card shows up in the heading outline. */
+  heading?: boolean;
   liveError?: boolean;
 }
 
-/** label, control, error, hint, in that order. */
-export function field({ label, control, hint, labelClass, liveError }: FieldOptions): Field {
+/** label (in an h2 when `heading`), control, error, hint, in that order. */
+export function field({ label, control, hint, labelClass, heading, liveError }: FieldOptions): Field {
   control.id ||= uid('field');
   const labelEl = h(
     'label',
     { for: control.id, class: labelClass ? `field-label ${labelClass}` : 'field-label' },
     label,
   );
+  const headingEl = heading ? h('h2', { class: 'card-title field-heading', id: uid('heading') }, labelEl) : null;
   const error = errorSlot({ live: liveError ?? false });
   let hintEl: HTMLElement | null = null;
   if (hint) {
     hintEl = h('p', { id: uid('hint'), class: 'hint' }, hint);
     addIdRef(control, 'aria-describedby', hintEl.id);
   }
-  return { element: h('div', { class: 'field' }, labelEl, control, error.element, hintEl), label: labelEl, error };
+  return {
+    element: h('div', { class: 'field' }, headingEl ?? labelEl, control, error.element, hintEl),
+    label: labelEl,
+    error,
+    heading: headingEl,
+  };
 }
 
 /** A <select> with the given options; `value` is selected, added as an extra option if unknown. */

@@ -1,14 +1,15 @@
 /** '#/scheduled' — everything created on this device, upcoming first. */
 
 import { messageSnippet } from '../../core/event';
-import { describeRecurrence, occurrences } from '../../core/recurrence';
-import { zonedTimeToUtc } from '../../core/timezone';
-import type { LocalDateTime, ScheduledMessage } from '../../core/types';
+import { describeRecurrence } from '../../core/recurrence';
+import type { ScheduledMessage } from '../../core/types';
 import { confirmDialog } from '../components/confirm';
 import type { AppContext, View } from '../context';
 import { h, uid } from '../dom';
 import { dayTimeLabel, recipientLabel } from '../format';
 import { icon } from '../icons';
+import { nextReminder } from '../occurrence';
+import type { NextReminder } from '../occurrence';
 import { doneHref } from '../router';
 import { openInCompose } from './compose';
 
@@ -16,29 +17,18 @@ const SNIPPET_LENGTH = 90;
 
 interface Entry {
   msg: ScheduledMessage;
-  /** The next occurrence still ahead of now, or null when all have passed. */
-  next: { local: LocalDateTime; at: number } | null;
+  /** The next reminder still ahead of now, or null when all have gone off. */
+  next: NextReminder | null;
 }
 
-/** First occurrence after `now`, widening the search only for long-running rules. */
-export function nextOccurrence(msg: ScheduledMessage, now: Date): Entry['next'] {
-  try {
-    for (const limit of [50, 500, 5000]) {
-      const dates = occurrences(msg.recurrence, msg.start, limit);
-      for (const date of dates) {
-        const local = { date, time: msg.start.time };
-        const at = zonedTimeToUtc(local, msg.timeZone).getTime();
-        if (at > now.getTime()) return { local, at };
-      }
-      if (dates.length < limit) return null;
-    }
-  } catch {
-    // A record that cannot be expanded is shown as done.
-  }
-  return null;
+/** When the calendar next notifies: "Reminder: …" when that is before the message's time, else "Next: …". */
+function nextLabel(msg: ScheduledMessage, next: NextReminder): string {
+  return msg.reminderMinutesBefore > 0
+    ? `Reminder: ${dayTimeLabel(next.reminder)}`
+    : `Next: ${dayTimeLabel(next.event)}`;
 }
 
-/** Upcoming by next occurrence, then done ones newest first. */
+/** Upcoming by next reminder, then done ones newest first. */
 function sortEntries(entries: Entry[]): Entry[] {
   const upcoming = entries.filter((e) => e.next).sort((a, b) => (a.next?.at ?? 0) - (b.next?.at ?? 0));
   const done = entries.filter((e) => !e.next);
@@ -73,9 +63,14 @@ export function scheduledView(ctx: AppContext): View {
       h(
         'div',
         { class: 'item-head' },
-        h('h2', { class: 'item-title', id: titleId }, h('span', { dir: 'auto' }, recipientLabel(msg.recipient))),
+        // The ellipsis sits on the dir=auto element itself, so a Hebrew title is cut at its end (on the left).
+        h(
+          'h2',
+          { class: 'item-title', id: titleId },
+          h('span', { class: 'truncate', dir: 'auto' }, recipientLabel(msg.recipient)),
+        ),
         next
-          ? h('span', { class: 'pill' }, `Next: ${dayTimeLabel(next.local)}`)
+          ? h('span', { class: 'pill' }, nextLabel(msg, next))
           : h('span', { class: 'pill pill-done' }, 'Done'),
       ),
       h('p', { class: 'item-message', dir: 'auto' }, messageSnippet(msg.message, SNIPPET_LENGTH)),
@@ -91,8 +86,8 @@ export function scheduledView(ctx: AppContext): View {
         h(
           'a',
           { class: 'btn btn-secondary btn-small', href: doneHref(msg.id), 'aria-describedby': titleId },
-          icon('calendar', 18),
-          'Calendar',
+          icon('info', 18),
+          'Details',
         ),
         h(
           'button',
@@ -100,7 +95,7 @@ export function scheduledView(ctx: AppContext): View {
             type: 'button',
             class: 'btn btn-secondary btn-small',
             'aria-describedby': titleId,
-            onClick: () => openInCompose(ctx, msg),
+            onClick: () => void openInCompose(ctx, msg),
           },
           icon('edit', 18),
           'Reuse',
@@ -122,7 +117,7 @@ export function scheduledView(ctx: AppContext): View {
 
   function render(): void {
     const now = new Date();
-    const entries = sortEntries(ctx.store.listHistory().map((msg) => ({ msg, next: nextOccurrence(msg, now) })));
+    const entries = sortEntries(ctx.store.listHistory().map((msg) => ({ msg, next: nextReminder(msg, now) })));
     if (entries.length === 0) {
       content.replaceChildren(
         h(

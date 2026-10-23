@@ -1,7 +1,8 @@
 /** The "Repeat" card: frequency, interval, weekdays, monthly mode, end, and a live preview. */
 
-import { addDays, isValidDate, isValidTime, parseDate } from '../../core/dates';
+import { addDays, daysInMonth, isValidDate, isValidTime, parseDate } from '../../core/dates';
 import {
+  LATEST_UNTIL_DATE,
   WEEKDAYS,
   alignStart,
   availableMonthlyModes,
@@ -13,7 +14,7 @@ import {
 } from '../../core/recurrence';
 import { utcToZoned, zonedTimeToUtc } from '../../core/timezone';
 import type { Frequency, LocalDateTime, MonthlyMode, Recurrence, RecurrenceEnd, Weekday } from '../../core/types';
-import { h, uid } from '../dom';
+import { h, inDocumentOrder, uid } from '../dom';
 import { dayLabel, userLanguage } from '../format';
 import { icon } from '../icons';
 import { LONG_DAY_NAMES, SHORT_DAY_NAMES, firstDayOfWeek, weekStartingOn, workweek } from '../week';
@@ -69,11 +70,18 @@ function monthlyLabel(mode: MonthlyMode, date: string): string {
   }
 }
 
-const isWholeNumberIn = (value: number, min: number, max: number): boolean =>
-  Number.isInteger(value) && value >= min && value <= max;
-
 /** '' -> NaN so an empty box fails validation instead of silently becoming 0. */
 const numberValue = (input: HTMLInputElement): number => (input.value.trim() === '' ? NaN : Number(input.value));
+
+/**
+ * The monthly option a start date suggests: the last day for the 29th-31st when that is the end of the month (someone
+ * starting on 31 October most likely means "every month end", not "skip every month without a 31st"), else the day.
+ */
+function suggestedMonthlyMode(date: string): MonthlyMode {
+  if (!isValidDate(date)) return 'dayOfMonth';
+  const { year, month, day } = parseDate(date);
+  return day > 28 && day === daysInMonth(year, month) ? 'lastDay' : 'dayOfMonth';
+}
 
 /** The date the reminder goes off for an occurrence on `date` (a "1 day before" reminder moves it back). */
 function reminderDate(date: string, context: RepeatContext): string {
@@ -86,13 +94,15 @@ export function createRepeatSection(options: { region: string; onChange: () => v
   const { onChange } = options;
   let context: RepeatContext | null = null;
   let monthlyMode: MonthlyMode = 'dayOfMonth';
+  /** The user (or a restored monthly rule) chose the monthly option; otherwise it follows the start date. */
+  let monthlyModeChosen = false;
   const selectedDays = new Set<Weekday>();
 
   const frequencySelect = selectControl(
     FREQUENCIES.map((f) => ({ value: f.value, label: f.label })),
     'none',
   );
-  const frequencyField = field({ label: 'Repeat', control: frequencySelect, labelClass: 'card-title' });
+  const frequencyField = field({ label: 'Repeat', control: frequencySelect, heading: true });
 
   // Every [n] unit(s)
   const intervalInput = h('input', {
@@ -179,7 +189,12 @@ export function createRepeatSection(options: { region: string; onChange: () => v
   const neverRadio = endRadio('never');
   const untilRadio = endRadio('until');
   const countRadio = endRadio('count');
-  const untilInput = h('input', { type: 'date', 'aria-label': 'End date', onInput: () => chooseEnd(untilRadio) });
+  const untilInput = h('input', {
+    type: 'date',
+    'aria-label': 'End date',
+    max: LATEST_UNTIL_DATE,
+    onInput: () => chooseEnd(untilRadio),
+  });
   const countInput = h('input', {
     type: 'number',
     inputmode: 'numeric',
@@ -215,14 +230,25 @@ export function createRepeatSection(options: { region: string; onChange: () => v
     ),
   );
 
+  // Each problem shows next to its own input: the interval's under "Every", the end's under "Ends".
+  const intervalError = errorSlot();
+  const endsError = errorSlot();
   const error = errorSlot();
   const summaryText = h('p', { class: 'summary-title' });
   const startNote = h('p', { class: 'summary-line' });
   const nextText = h('p', { class: 'summary-line' });
   const summary = h('div', { class: 'summary' }, icon('repeat'), h('div', null, summaryText, startNote, nextText));
-  const details = h('div', { class: 'stack repeat-details' }, intervalRow, weeklyBlock, monthlyBlock, endsBlock);
+  const details = h(
+    'div',
+    { class: 'stack repeat-details' },
+    h('div', { class: 'stack-tight' }, intervalRow, intervalError.element),
+    weeklyBlock,
+    monthlyBlock,
+    error.element,
+    h('div', { class: 'stack-tight' }, endsBlock, endsError.element),
+  );
 
-  const element = h('section', { class: 'card' }, frequencyField.element, details, error.element, summary);
+  const element = h('section', { class: 'card' }, frequencyField.element, details, summary);
   frequencySelect.addEventListener('change', () => {
     if (frequency() === 'weekly' && selectedDays.size === 0 && context && isValidDate(context.start.date)) {
       setDays([weekdayOf(context.start.date)]);
@@ -236,8 +262,15 @@ export function createRepeatSection(options: { region: string; onChange: () => v
     return FREQUENCIES.find((f) => f.value === value)?.value ?? 'none';
   }
 
-  function changed(): void {
+  function clearErrors(): void {
+    intervalError.clear();
+    endsError.clear();
     error.clear();
+  }
+
+  function changed(): void {
+    clearErrors();
+    daysHint.textContent = '';
     render();
     onChange();
   }
@@ -295,7 +328,11 @@ export function createRepeatSection(options: { region: string; onChange: () => v
 
   function renderMonthly(date: string): void {
     const modes = availableMonthlyModes(date);
-    if (!modes.includes(monthlyMode)) monthlyMode = 'dayOfMonth';
+    if (!monthlyModeChosen || !modes.includes(monthlyMode)) {
+      const suggested = suggestedMonthlyMode(date);
+      monthlyMode = modes.includes(suggested) ? suggested : 'dayOfMonth';
+      monthlyModeChosen = false;
+    }
     monthlyOptions.replaceChildren(
       ...modes.map((mode) =>
         h(
@@ -308,6 +345,7 @@ export function createRepeatSection(options: { region: string; onChange: () => v
             checked: mode === monthlyMode,
             onChange: () => {
               monthlyMode = mode;
+              monthlyModeChosen = true;
               changed();
             },
           }),
@@ -373,6 +411,8 @@ export function createRepeatSection(options: { region: string; onChange: () => v
     frequencySelect.value = FREQUENCIES.some((f) => f.value === rec.frequency) ? rec.frequency : defaults.frequency;
     intervalInput.value = String(rec.interval);
     monthlyMode = rec.monthlyMode;
+    // A monthly rule being restored keeps its option; otherwise the option follows the start date.
+    monthlyModeChosen = rec.frequency === 'monthly';
     setDays(rec.weekdays);
     neverRadio.checked = rec.end.type === 'never';
     untilRadio.checked = rec.end.type === 'until';
@@ -381,24 +421,37 @@ export function createRepeatSection(options: { region: string; onChange: () => v
     countInput.value = String(rec.end.type === 'count' ? rec.end.count : DEFAULT_COUNT);
     context = null;
     update(next);
-    error.clear();
+    clearErrors();
   }
 
+  /** Sends each core message to the slot of the input it is about (found by asking the core without that input). */
   function showErrors(messages: readonly string[]): HTMLElement {
     const rec = get();
+    const startDate = context?.start.date ?? '';
+    const withoutEnd = new Set(validateRecurrence({ ...rec, end: { type: 'never' } }, startDate));
+    const withInterval = new Set(validateRecurrence({ ...rec, interval: 1 }, startDate));
+    const forEnd = messages.filter((m) => !withoutEnd.has(m));
+    const forInterval = messages.filter((m) => withoutEnd.has(m) && !withInterval.has(m));
+    const rest = messages.filter((m) => withoutEnd.has(m) && withInterval.has(m));
+
     const targets: HTMLElement[] = [];
-    if (!isWholeNumberIn(rec.interval, 1, 999)) targets.push(intervalInput);
-    if (rec.end.type === 'count' && !isWholeNumberIn(rec.end.count, 1, 1000)) targets.push(countInput);
-    if (rec.end.type === 'until') {
-      const startDate = context?.start.date ?? '';
-      const first = isValidDate(startDate) ? alignStart(rec, startDate) : '';
-      if (!isValidDate(rec.end.date) || rec.end.date < first) targets.push(untilInput);
+    if (forInterval.length > 0) {
+      intervalError.show(forInterval.join(' '), [intervalInput]);
+      targets.push(intervalInput);
     }
-    if (targets.length === 0) targets.push(frequencySelect);
-    error.show(messages.join(' '), targets);
-    return targets[0] ?? frequencySelect;
+    if (forEnd.length > 0) {
+      const endInput = rec.end.type === 'until' ? untilInput : countInput;
+      endsError.show(forEnd.join(' '), [endInput]);
+      targets.push(endInput);
+    }
+    // Days of the week or the monthly option (which the form keeps valid), or anything not matched above.
+    if (rest.length > 0 || targets.length === 0) {
+      error.show((rest.length > 0 ? rest : messages).join(' '), [frequencySelect]);
+      targets.push(frequencySelect);
+    }
+    return inDocumentOrder(targets)[0] ?? frequencySelect;
   }
 
   render();
-  return { element, get, set, update, showErrors, clearErrors: () => error.clear() };
+  return { element, get, set, update, showErrors, clearErrors };
 }

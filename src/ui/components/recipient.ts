@@ -3,10 +3,9 @@
  * or "I'll choose the chat in WhatsApp".
  */
 
-import { detectDefaultCountry, normalizePhone } from '../../core/phone';
+import { normalizePhone } from '../../core/phone';
 import type { PhoneResult } from '../../core/phone';
-import { getDeviceTimeZone } from '../../core/timezone';
-import type { Recipient, SavedContact } from '../../core/types';
+import type { PendingRecipient, Recipient, SavedContact } from '../../core/types';
 import { parseVCards } from '../../core/vcard';
 import type { VCardContact } from '../../core/vcard';
 import { isContactPickerSupported, pickContact } from '../contacts';
@@ -19,6 +18,16 @@ import type { ErrorSlot } from './field';
 const MAX_RECENTS = 6;
 const MAX_LISTED_CONTACTS = 50;
 const MAX_VCF_BYTES = 20 * 1024 * 1024;
+/** What the store keeps of an unresolved recipient (longer values are not stored). */
+const MAX_PENDING_PHONES = 20;
+const MAX_PENDING_TEXT = 200;
+/** vCard labels of mobile numbers (the Contact Picker gives none). */
+const MOBILE_LABEL = /^(mobile|cell|cellular|iphone|mobil|handy)\b/i;
+/** The core's remedy for a local number that only fits another country, which a picked contact can't follow. */
+const ADD_ITS_COUNTRY_CODE = /\s*Add its country code \(start with \+\)\.$/;
+const ADD_THE_COUNTRY_CODE = /^Add the country code \(start with \+\), or choose your country first\.$/;
+/** Errors a different default country could fix. */
+const COUNTRY_ERROR = /another country|country code/i;
 
 interface NumberChoice {
   raw: string;
@@ -34,6 +43,12 @@ interface Selection {
   chosen: number;
 }
 
+/** What the draft keeps: a usable recipient (or "choose in WhatsApp"), else the input that is not resolved yet. */
+export interface RecipientDraft {
+  recipient?: Recipient;
+  pending?: PendingRecipient;
+}
+
 export interface RecipientSection {
   readonly element: HTMLElement;
   /** Shows any problem inline; returns the recipient (with any doubt about its number), or the element to focus. */
@@ -41,9 +56,9 @@ export interface RecipientSection {
   /** Show an error from the core validator; returns the element to focus. */
   showError(message: string): HTMLElement;
   clearErrors(): void;
-  /** What the draft keeps: undefined until a usable recipient (or "choose in WhatsApp") is set. */
-  draftValue(): Recipient | undefined;
-  set(recipient: Recipient | undefined): void;
+  draftValue(): RecipientDraft;
+  /** Restore a recipient, or unresolved input (read again with the current default country). */
+  set(recipient: Recipient | undefined, pending?: PendingRecipient): void;
 }
 
 export interface RecentContacts {
@@ -53,6 +68,8 @@ export interface RecentContacts {
 
 export interface RecipientOptions {
   defaultCountry: string;
+  /** Other countries a number without a country code may be meant for, offered as "Read as …" (see context.ts). */
+  alternatives: readonly string[];
   /** Shown as chips, each with a remove button. */
   recents: RecentContacts;
   onChange: () => void;
@@ -92,17 +109,49 @@ const lacksCountryCode = (raw: string): boolean => !raw.includes('+');
 /** Unusable, or usable with a warning. */
 const isDoubtful = (choice: NumberChoice): boolean => !choice.result.ok || choice.result.warning !== undefined;
 
-/** The country of the device's time zone when it is not the default one (e.g. Israel, after a trip abroad changed it). */
-function zoneCountry(defaultCountry: string): string | undefined {
-  const fromZone = detectDefaultCountry([], getDeviceTimeZone());
-  // For a zone it does not know, detectDefaultCountry returns its fixed fallback; only a real match counts.
-  const fallback = detectDefaultCountry([], '');
-  return fromZone !== defaultCountry && fromZone !== fallback ? fromZone : undefined;
+/** A doubtful number whose problem comes from the default country (not, say, a number that is too short). */
+const isCountryDependent = (choice: NumberChoice): boolean =>
+  lacksCountryCode(choice.raw) &&
+  (choice.result.ok ? choice.result.warning !== undefined : COUNTRY_ERROR.test(choice.result.error));
+
+/**
+ * The core error, with a remedy a picked contact can follow (its number can't be edited here). `remedy` false keeps
+ * only the reason, for places where the remedy is shown once below.
+ */
+function contactError(error: string, remedy: false | { readAs: boolean }): string {
+  if (ADD_ITS_COUNTRY_CODE.test(error)) {
+    if (!remedy) return error.replace(ADD_ITS_COUNTRY_CODE, '');
+    const fix = remedy.readAs
+      ? "Change the default country in Settings or use 'Read as …' below."
+      : 'Change the default country in Settings.';
+    return error.replace(ADD_ITS_COUNTRY_CODE, ` ${fix}`);
+  }
+  if (ADD_THE_COUNTRY_CODE.test(error)) {
+    return remedy ? 'It has no country code. Choose your country in Settings.' : 'It has no country code.';
+  }
+  return error;
+}
+
+/** A usable number that is clearly a mobile one: labelled so, or an Israeli 05x number. */
+function isMobile(choice: NumberChoice): boolean {
+  if (!choice.result.ok || choice.result.warning) return false;
+  return MOBILE_LABEL.test(choice.label.trim()) || choice.result.digits.startsWith('9725');
+}
+
+/** The number to preselect: the only usable one, else the only clearly mobile one; -1 to let the user choose. */
+function preselect(choices: readonly NumberChoice[]): number {
+  const usable = choices.flatMap((choice, index) => (choice.result.ok ? [index] : []));
+  if (usable.length === 1) return usable[0] ?? -1;
+  const mobiles = usable.filter((index) => {
+    const choice = choices[index];
+    return choice !== undefined && isMobile(choice);
+  });
+  return mobiles.length === 1 ? (mobiles[0] ?? -1) : -1;
 }
 
 /**
  * The choices with each doubtful number that has no country code read in `country` instead, where that gives a
- * clean reading; null when it improves none of them.
+ * clean reading of a different number; null when it improves none of them.
  */
 function rereadChoices(choices: readonly NumberChoice[], country: string): NumberChoice[] | null {
   const seen = new Set(choices.flatMap((c) => (c.result.ok && !c.result.warning ? [c.result.digits] : [])));
@@ -110,7 +159,8 @@ function rereadChoices(choices: readonly NumberChoice[], country: string): Numbe
   const next: NumberChoice[] = [];
   for (const choice of choices) {
     const result = isDoubtful(choice) && lacksCountryCode(choice.raw) ? normalizePhone(choice.raw, country) : null;
-    if (!result?.ok || result.warning) {
+    const differs = result?.ok && !result.warning && (!choice.result.ok || choice.result.digits !== result.digits);
+    if (!result?.ok || !differs) {
       next.push(choice);
     } else if (!seen.has(result.digits)) {
       // (A number already listed with its country code is dropped instead of shown twice.)
@@ -123,18 +173,37 @@ function rereadChoices(choices: readonly NumberChoice[], country: string): Numbe
 }
 
 /** Why the selected contact cannot be used, or null when one of its numbers can. */
-function selectionProblem(sel: Selection): string | null {
+function selectionProblem(sel: Selection, readAs: boolean): string | null {
   if (sel.choices.some((choice) => choice.result.ok)) return null;
   const [only] = sel.choices;
   return sel.choices.length === 1 && only && !only.result.ok
-    ? `This number can't be used: ${only.result.error}`
+    ? `This number can't be used: ${contactError(only.result.error, { readAs })}`
     : 'None of these numbers can be used. Choose another contact or enter the number.';
+}
+
+/** At most `max` UTF-16 units, without splitting a character. */
+function clip(text: string, max: number): string {
+  let out = '';
+  for (const ch of text) {
+    if (out.length + ch.length > max) break;
+    out += ch;
+  }
+  return out;
+}
+
+/** How a number is kept while the contact is unresolved: a clean reading as is, a doubtful one as written. */
+function pendingPhone(choice: NumberChoice): string {
+  return choice.result.ok && !choice.result.warning ? `+${choice.result.digits}` : choice.raw;
+}
+
+interface Alternative {
+  label: string;
+  choices: NumberChoice[];
 }
 
 export function createRecipientSection(options: RecipientOptions): RecipientSection {
   const { defaultCountry, onChange } = options;
   const supported = isContactPickerSupported();
-  const altCountry = zoneCountry(defaultCountry);
   let selection: Selection | null = null;
   let picking = false;
   let cardError: ErrorSlot | null = null;
@@ -292,8 +361,18 @@ export function createRecipientSection(options: RecipientOptions): RecipientSect
     body.replaceChildren(selection ? renderSelection(selection) : chooser);
   }
 
+  /** One-tap re-readings of the selection in the alternative countries that improve it. */
+  function alternativesFor(sel: Selection): Alternative[] {
+    return options.alternatives.flatMap((country) => {
+      const info = countryInfo(country);
+      const choices = info ? rereadChoices(sel.choices, country) : null;
+      return info && choices ? [{ label: `Read as ${info.name} (+${info.callingCode})`, choices }] : [];
+    });
+  }
+
   function renderSelection(sel: Selection): HTMLElement {
     cardError = errorSlot();
+    const alternatives = alternativesFor(sel);
     const only = sel.choices.length === 1 ? sel.choices[0] : undefined;
     const display = only?.result.ok ? only.result.international : only?.raw;
     const warning = only?.result.ok ? only.result.warning : undefined;
@@ -327,8 +406,9 @@ export function createRecipientSection(options: RecipientOptions): RecipientSect
         h(
           'div',
           { class: 'contact-text', id: textId },
-          h('p', { class: 'contact-name' }, h('span', { dir: sel.name ? 'auto' : 'ltr' }, primary)),
-          secondary ? h('p', { class: 'contact-number', dir: 'ltr' }, secondary) : null,
+          // The ellipsis sits on the dir=auto element itself, so a Hebrew name is cut at its end (on the left).
+          h('p', { class: 'contact-name' }, h('span', { class: 'truncate', dir: sel.name ? 'auto' : 'ltr' }, primary)),
+          secondary ? h('p', { class: 'contact-number phone', dir: 'ltr' }, secondary) : null,
         ),
         change,
       ),
@@ -362,7 +442,7 @@ export function createRecipientSection(options: RecipientOptions): RecipientSect
           radios.push(radio);
           const detail = choice.result.ok
             ? [choice.label, choice.result.warning].filter(Boolean).join(' · ')
-            : [choice.label, choice.result.error].filter(Boolean).join(' · ');
+            : [choice.label, contactError(choice.result.error, false)].filter(Boolean).join(' · ');
           return h(
             'label',
             { class: 'choice' },
@@ -372,7 +452,7 @@ export function createRecipientSection(options: RecipientOptions): RecipientSect
               { class: 'choice-text' },
               h(
                 'span',
-                { class: 'choice-main', dir: 'ltr' },
+                { class: 'choice-main phone', dir: 'ltr' },
                 choice.result.ok ? choice.result.international : choice.raw,
               ),
               detail
@@ -385,46 +465,55 @@ export function createRecipientSection(options: RecipientOptions): RecipientSect
       );
       card.append(group);
       const firstEnabled = radios.find((radio) => !radio.disabled);
-      if (sel.chosen < 0 && firstEnabled) cardFocusTarget = firstEnabled;
+      // Focus the preselected number (so it is heard, and easy to change), else the first one to choose from.
+      const checked = radios[sel.chosen];
+      if (checked && !checked.disabled) cardFocusTarget = checked;
+      else if (firstEnabled) cardFocusTarget = firstEnabled;
       groupRef = { group, firstEnabled: firstEnabled ?? null };
     } else {
       card.append(cardError.element);
       groupRef = null;
-      const problem = selectionProblem(sel);
+      const problem = selectionProblem(sel, alternatives.length > 0);
       if (problem) cardError.show(problem, [change]);
     }
-    const fix = countryFix(sel);
+    const fix = countryFix(sel, alternatives);
     if (fix) card.append(fix);
     return card;
   }
 
   /**
-   * Under numbers the default country made unusable or doubtful: which country that is, and a one-tap re-read
-   * in the time zone's country when that gives clean readings.
+   * Under numbers whose trouble comes from the default country, or that another likely country reads cleanly: which
+   * country is used, a link to change it, and a one-tap re-read in each country that gives clean readings.
    */
-  function countryFix(sel: Selection): HTMLElement | null {
-    if (!sel.choices.some((choice) => isDoubtful(choice) && lacksCountryCode(choice.raw))) return null;
-    const reread = altCountry ? rereadChoices(sel.choices, altCountry) : null;
-    const info = altCountry ? countryInfo(altCountry) : undefined;
-    const button =
-      reread && info
+  function countryFix(sel: Selection, alternatives: readonly Alternative[]): HTMLElement | null {
+    if (alternatives.length === 0 && !sel.choices.some(isCountryDependent)) return null;
+    return h(
+      'div',
+      { class: 'country-fix' },
+      h('p', { class: 'hint' }, countryHint(defaultCountry)),
+      alternatives.length > 0
         ? h(
-            'button',
-            { type: 'button', class: 'btn btn-secondary btn-small', onClick: () => useChoices(sel, reread) },
-            `Read as ${info.name} (+${info.callingCode})`,
+            'div',
+            { class: 'button-row' },
+            alternatives.map((alt) =>
+              h(
+                'button',
+                { type: 'button', class: 'btn btn-secondary btn-small', onClick: () => useChoices(sel, alt.choices) },
+                alt.label,
+              ),
+            ),
           )
-        : null;
-    return h('div', { class: 'country-fix' }, h('p', { class: 'hint' }, countryHint(defaultCountry)), button);
+        : null,
+    );
   }
 
   /** Swap in re-read numbers, keeping the chosen one when it is still there. */
   function useChoices(sel: Selection, choices: NumberChoice[]): void {
     const before = sel.choices[sel.chosen]?.result;
     const chosenDigits = before?.ok && !before.warning ? before.digits : undefined;
-    const valid = choices.flatMap((choice, index) => (choice.result.ok ? [index] : []));
     const kept = choices.findIndex((choice) => choice.result.ok && choice.result.digits === chosenDigits);
     sel.choices = choices;
-    sel.chosen = kept >= 0 ? kept : valid.length === 1 ? (valid[0] ?? -1) : -1;
+    sel.chosen = kept >= 0 ? kept : preselect(choices);
     clearErrors();
     render();
     onChange();
@@ -438,8 +527,7 @@ export function createRecipientSection(options: RecipientOptions): RecipientSect
       chooserError.show('This contact has no phone number.', pickButton ? [pickButton] : []);
       return;
     }
-    const valid = choices.flatMap((choice, index) => (choice.result.ok ? [index] : []));
-    selection = { name: contact.name.trim(), choices, chosen: valid.length === 1 ? (valid[0] ?? -1) : -1 };
+    selection = { name: contact.name.trim(), choices, chosen: preselect(choices) };
     vcfPicker.hidden = true;
     vcfPicker.replaceChildren();
     render();
@@ -506,7 +594,7 @@ export function createRecipientSection(options: RecipientOptions): RecipientSect
               'button',
               { type: 'button', class: 'contact-row', onClick: () => selectContact(contact) },
               h('span', { class: 'contact-row-name', dir: 'auto' }, contact.name || 'No name'),
-              h('span', { class: 'contact-row-number', dir: 'ltr' }, contact.phones[0]?.value ?? ''),
+              h('span', { class: 'contact-row-number phone', dir: 'ltr' }, contact.phones[0]?.value ?? ''),
             ),
           ),
         ),
@@ -541,7 +629,9 @@ export function createRecipientSection(options: RecipientOptions): RecipientSect
     );
     vcfPicker.hidden = false;
     update();
-    search.focus();
+    // While the list is open the submit bar stops being sticky (styles.css), and the page is the only scroller.
+    search.focus({ preventScroll: true });
+    vcfPicker.scrollIntoView({ block: 'start' });
   }
 
   /** Live check of the typed number: errors appear on blur and clear as soon as the number is fixed. */
@@ -555,6 +645,8 @@ export function createRecipientSection(options: RecipientOptions): RecipientSect
     const result = normalizePhone(value, defaultCountry);
     if (result.ok) {
       phoneField.error.clear();
+      // "Choose a contact or enter a number." no longer applies.
+      chooserError.clear();
       setChildren(
         phonePreview,
         icon('check', 18),
@@ -592,7 +684,8 @@ export function createRecipientSection(options: RecipientOptions): RecipientSect
       }
       // Keep the specific reason (and the country hint below it) rather than a generic message.
       const target = cardFocusTarget ?? element;
-      cardError?.show(selectionProblem(selection) ?? "This contact's number can't be used.", [target]);
+      const readAs = alternativesFor(selection).length > 0;
+      cardError?.show(selectionProblem(selection, readAs) ?? "This contact's number can't be used.", [target]);
       return { invalid: target };
     }
 
@@ -624,18 +717,33 @@ export function createRecipientSection(options: RecipientOptions): RecipientSect
     return phoneInput;
   }
 
-  function draftValue(): Recipient | undefined {
-    if (chooseInApp.checked) return { name: '', phone: '' };
+  function draftValue(): RecipientDraft {
+    if (chooseInApp.checked) return { recipient: { name: '', phone: '' } };
     if (selection) {
       const choice = selection.choices[selection.chosen];
-      return choice?.result.ok ? { name: selection.name, phone: choice.result.digits } : undefined;
+      if (choice?.result.ok) return { recipient: { name: selection.name, phone: choice.result.digits } };
+      // Not usable yet (no number chosen, or the default country reads it badly): keep it to resolve later.
+      const phones = selection.choices.map(pendingPhone).filter((phone) => phone.length <= MAX_PENDING_TEXT);
+      return phones.length > 0
+        ? {
+            pending: {
+              name: clip(selection.name, MAX_PENDING_TEXT),
+              phones: phones.slice(0, MAX_PENDING_PHONES),
+              source: 'contact',
+            },
+          }
+        : {};
     }
-    if (!phoneInput.value.trim()) return undefined;
-    const result = normalizePhone(phoneInput.value, defaultCountry);
-    return result.ok ? { name: nameInput.value.trim(), phone: result.digits } : undefined;
+    const typed = phoneInput.value;
+    if (!typed.trim()) return {};
+    const result = normalizePhone(typed, defaultCountry);
+    if (result.ok) return { recipient: { name: nameInput.value.trim(), phone: result.digits } };
+    return typed.length <= MAX_PENDING_TEXT
+      ? { pending: { name: clip(nameInput.value.trim(), MAX_PENDING_TEXT), phones: [typed], source: 'typed' } }
+      : {};
   }
 
-  function set(recipient: Recipient | undefined): void {
+  function set(recipient: Recipient | undefined, pending?: PendingRecipient): void {
     selection = null;
     chooseInApp.checked = false;
     nameInput.value = '';
@@ -649,6 +757,14 @@ export function createRecipientSection(options: RecipientOptions): RecipientSect
     if (recipient?.phone) {
       const value = /^\d+$/.test(recipient.phone) ? `+${recipient.phone}` : recipient.phone;
       selectContact({ name: recipient.name, phones: [{ value, label: '' }] }, false);
+    } else if (!recipient && pending?.source === 'contact') {
+      // Read again with the current default country: after a trip to Settings the contact may now be usable.
+      selectContact({ name: pending.name, phones: pending.phones.map((value) => ({ value, label: '' })) }, false);
+    } else if (!recipient && pending?.source === 'typed') {
+      phoneInput.value = pending.phones[0] ?? '';
+      nameInput.value = pending.name;
+      if (manualDisclosure) manualDisclosure.open = true;
+      checkPhone(true);
     }
     render();
   }

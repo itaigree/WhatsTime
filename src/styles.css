@@ -8,7 +8,8 @@
   --text: #13201b;
   --muted: #55645e;
   --border: #dde5e2;
-  --border-strong: #b7c4bf;
+  /* Outlines of inputs, chips and toggles: at least 3:1 against bg, surface and surface-2 (WCAG 1.4.11). */
+  --border-strong: #7f8f89;
   --accent: #0a7f62;
   --accent-hover: #086b52;
   --accent-soft: #e1f2ec;
@@ -54,7 +55,7 @@
     --text: #e3ebe8;
     --muted: #9cafa8;
     --border: #24332e;
-    --border-strong: #3b4d47;
+    --border-strong: #5f746c;
     --accent: #2bd4a4;
     --accent-hover: #63e1bd;
     --accent-soft: #11372d;
@@ -84,7 +85,7 @@
   --text: #e3ebe8;
   --muted: #9cafa8;
   --border: #24332e;
-  --border-strong: #3b4d47;
+  --border-strong: #5f746c;
   --accent: #2bd4a4;
   --accent-hover: #63e1bd;
   --accent-soft: #11372d;
@@ -177,6 +178,26 @@ h1:focus,
 
 .block {
   display: block;
+}
+
+/*
+ * One line with an ellipsis, set on the dir=auto element itself: the ellipsis then goes at the end of the text in its
+ * own direction, so a Hebrew name loses its last words (on the left), not its first ones.
+ */
+.truncate {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: plaintext;
+}
+
+/* A formatted phone number reads as one unit: never break it at its hyphens. */
+.phone {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ---------- App bar ---------- */
@@ -373,8 +394,15 @@ html {
   margin-bottom: 12px;
 }
 
-.field-label.card-title {
+/* A field whose label is the card's heading: <h2 class="card-title field-heading"><label>…</label></h2>. */
+.field-heading {
   margin-bottom: 4px;
+}
+
+.field-heading > .field-label {
+  display: block;
+  font-size: inherit;
+  font-weight: inherit;
 }
 
 .subhead {
@@ -420,7 +448,8 @@ html {
 /* Empty live regions stay in the accessibility tree (so later text is announced) but take no space. */
 .field-error:empty,
 .phone-preview:empty,
-.clock-note:empty {
+.clock-note:empty,
+.message-note:empty {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -905,10 +934,8 @@ input[type='radio'] {
 }
 
 .contact-name {
+  min-width: 0;
   font-weight: 650;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .contact-number {
@@ -1006,8 +1033,6 @@ input[type='radio'] {
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 320px;
-  overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
   background: var(--surface);
@@ -1148,6 +1173,11 @@ label.radio-row,
   background: linear-gradient(to bottom, transparent, var(--bg) 16px);
 }
 
+/* While a contact is picked from a .vcf list, "Create reminder" has no use: it stops covering the list. */
+.compose:has(.vcf-picker:not([hidden])) .submit-bar {
+  position: static;
+}
+
 /* ---------- Result ---------- */
 
 .hero {
@@ -1171,6 +1201,15 @@ label.radio-row,
   border-radius: 50%;
   color: var(--accent);
   background: var(--accent-soft);
+}
+
+.hero-icon.is-muted {
+  color: var(--muted);
+  background: var(--surface-2);
+}
+
+.passed-actions {
+  margin-bottom: 12px;
 }
 
 .eyebrow {
@@ -1205,13 +1244,16 @@ label.radio-row,
   min-width: 0;
 }
 
-.message-text {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.message-box {
   padding: 10px 12px;
   margin-top: 4px;
   background: var(--surface-2);
   border-radius: 12px;
+}
+
+.message-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .message-text.clamp {
@@ -1296,11 +1338,9 @@ label.radio-row,
 
 .item-title {
   min-width: 0;
+  max-width: 100%;
   font-size: 1.0625rem;
   font-weight: 650;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .pill {
@@ -1437,6 +1477,14 @@ label.radio-row,
   }
 }
 
+/* Seven weekday toggles in one row are under 44px wide below about 400px: use two rows (4 + 3). */
+@media (max-width: 399px) {
+  .day-toggles {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+  }
+}
+
 @media (max-width: 359px) {
   :root {
     --gutter: 12px;
@@ -1448,6 +1496,11 @@ label.radio-row,
 
   .card {
     padding: 14px;
+  }
+
+  /* Date and time side by side would clip their values ('10/23/202', '09:00 AI'). */
+  .grid-2 {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

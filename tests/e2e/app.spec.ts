@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 import {
   CHOOSE_IN_WHATSAPP,
   FUTURE_DATE,
+  clearForm,
   createReminder,
   dateInput,
   fakeContactPicker,
@@ -170,7 +171,9 @@ test('contact card import: pick one of several contacts from a .vcf file', async
   await page.getByRole('button', { name: /Maya Ben-David/ }).click();
 
   const numbers = page.getByRole('radiogroup', { name: 'Which number?' });
+  // The one mobile number is preselected (and focused, so it is heard and easy to change).
   await expect(numbers.getByRole('radio', { name: /\+972 54-111-2233.*Mobile/ })).toBeFocused();
+  await expect(numbers.getByRole('radio', { name: /\+972 54-111-2233.*Mobile/ })).toBeChecked();
   await numbers.getByRole('radio', { name: /Home/ }).check();
   await messageBox(page).fill('Shabbat shalom');
   await setWhen(page, FUTURE_DATE, '16:00');
@@ -299,7 +302,7 @@ test('share target: shared text becomes the message and the query is removed', a
   expect(new URL(page.url()).search).toBe('');
 
   // Android often repeats the URL inside the text; it is kept once.
-  await page.getByRole('button', { name: 'Clear', exact: true }).click();
+  await clearForm(page);
   await page.goto('./?title=Look&text=Check%20this%20out%20https%3A%2F%2Fexample.com&url=https%3A%2F%2Fexample.com');
   await expect(messageBox(page)).toHaveValue('Look\nCheck this out https://example.com');
   expect(new URL(page.url()).search).toBe('');
@@ -320,7 +323,7 @@ test('the draft survives a reload', async ({ page }) => {
   await expect(page.getByLabel('Repeat', { exact: true })).toHaveValue('daily');
   await expect(page.getByLabel(CHOOSE_IN_WHATSAPP)).toBeChecked();
 
-  await page.getByRole('button', { name: 'Clear', exact: true }).click();
+  await clearForm(page);
   await expect(messageBox(page)).toHaveValue('');
   await page.reload();
   await expect(messageBox(page)).toHaveValue('');
@@ -453,10 +456,13 @@ test('recent contacts can be removed one by one or all at once, and Settings cle
   await page.getByRole('dialog').getByRole('button', { name: 'Clear contacts' }).click();
   await expect(page.getByText('No recent contacts saved on this device.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Clear recent contacts' })).toBeDisabled();
+  // The disabled button can't keep focus: it moves to the card's heading, not back to the top of the page.
+  await expect(page.getByRole('heading', { level: 2, name: 'Recent contacts' })).toBeFocused();
 
   await page.getByRole('button', { name: 'Clear scheduled list' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Clear list' }).click();
   await expect(page.getByText('No reminders saved on this device.')).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Scheduled list' })).toBeFocused();
   const stored = await page.evaluate(() =>
     ['contacts', 'history'].map((key) => localStorage.getItem(`whatstime:v1:${key}`)),
   );
@@ -478,19 +484,42 @@ test('share target: shared text is added below an unsent draft instead of replac
   // Sharing the same text again changes nothing; neither does text identical to the draft.
   await page.goto('./?text=See%20you%20at%208');
   await expect(messageBox(page)).toHaveValue('Happy birthday!\n\nSee you at 8');
-  await page.getByRole('button', { name: 'Clear', exact: true }).click();
+  await clearForm(page);
   await messageBox(page).fill('Same text');
   await expect.poll(() => page.evaluate(() => localStorage.getItem('whatstime:v1:draft') ?? '')).toContain('Same text');
   await page.goto('./?text=Same%20text');
   await expect(messageBox(page)).toHaveValue('Same text');
 });
 
-test('a message too long for a Google Calendar link offers the calendar file instead', async ({ page }) => {
-  // About 1000 Hebrew characters: the wa.me link alone, encoded twice in `details`, is past Google's limit.
-  await createReminder(page, 'שלום, מה שלומך היום? '.repeat(50));
+test('a message too long for a Google Calendar link is flagged while typing, and offers the calendar file', async ({
+  page,
+}) => {
+  const googleHint =
+    'Too long for a Google Calendar link (you can still use the calendar file). Shorten it to use Google Calendar.';
+  const generic = 'Very long messages may be cut off by some calendar apps.';
+  await page.goto('./');
+  await page.getByLabel(CHOOSE_IN_WHATSAPP).check();
+  await setWhen(page, FUTURE_DATE, '09:30');
+
+  // About 500 Hebrew characters: a long link, but Google still takes it.
+  await messageBox(page).fill('שלום '.repeat(100));
+  await expect(page.getByText(generic, { exact: false })).toBeVisible();
+  await expect(page.getByText(googleHint)).toHaveCount(0);
+
+  // About 1000: the wa.me link alone, encoded twice in `details`, is past Google's limit. Said under the message,
+  // in place of the general hint.
+  await messageBox(page).fill('שלום, מה שלומך היום? '.repeat(50));
+  await expect(page.getByText(googleHint)).toBeVisible();
+  await expect(messageBox(page)).toHaveAccessibleDescription(/Too long for a Google Calendar link/);
+  await expect(page.getByText(generic, { exact: false })).toHaveCount(0);
+
+  await submitButton(page).click();
+  await expect(page).toHaveURL(/#\/done\//);
   await expect(page.getByRole('link', { name: 'Add to Google Calendar' })).toHaveCount(0);
   await expect(page.getByText('This message is too long for a Google Calendar link.', { exact: false })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Download calendar file (.ics)' })).toHaveClass(/btn-primary/);
+  // One warning about the length, not two stacked ones.
+  await expect(page.getByText(generic, { exact: false })).toHaveCount(0);
 });
 
 test('a time skipped or repeated by a clock change gets a note under it', async ({ page }) => {

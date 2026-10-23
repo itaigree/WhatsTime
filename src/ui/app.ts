@@ -1,7 +1,7 @@
 /** App shell: tabs, routing between views, focus management and the status toast. */
 
 import { createStore } from '../core/storage';
-import { defaultSettings, safeLocalStorage } from './context';
+import { initialSettings, safeLocalStorage } from './context';
 import type { AppContext, View } from './context';
 import { h } from './dom';
 import { parseRoute } from './router';
@@ -112,16 +112,20 @@ export function startApp(options: { sharedText: string | null }): void {
     }, ms);
   };
 
-  // Writes fail silently in the store (quota, blocked storage); say so once, not on every keystroke.
+  // Writes fail silently in the store (quota, blocked storage); say so once, not on every keystroke, and not for the
+  // settings saved by itself at launch (the user hears about it when something they did is not saved).
   let saveFailureShown = false;
+  let launching = true;
   const store = createStore(safeLocalStorage(), () => {
-    if (saveFailureShown) return;
+    if (saveFailureShown || launching) return;
     saveFailureShown = true;
     announce("Couldn't save on this device. Storage may be full or blocked.", LONG_TOAST_MS);
   });
+  const settings = initialSettings(store);
+  launching = false;
   const ctx: AppContext = {
     store,
-    settings: store.loadSettings(defaultSettings()),
+    settings,
     saveSettings(next) {
       ctx.settings = next;
       store.saveSettings(next);

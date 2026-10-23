@@ -5,7 +5,7 @@ import { formatPhoneForDisplay } from '../../core/phone';
 import { GOOGLE_CALENDAR_URL_MAX_LENGTH, buildGoogleCalendarUrl } from '../../core/gcal';
 import { buildIcs, icsFileName } from '../../core/ics';
 import { describeRecurrence } from '../../core/recurrence';
-import { getDeviceTimeZone, utcToZoned } from '../../core/timezone';
+import { getDeviceTimeZone, utcToZoned, zonedTimeToUtc } from '../../core/timezone';
 import type { CalendarEvent, ScheduledMessage } from '../../core/types';
 import type { AppContext, View } from '../context';
 import { h, uid } from '../dom';
@@ -13,6 +13,7 @@ import type { Child } from '../dom';
 import { longDayTimeLabel, reminderLabel, timeLabel } from '../format';
 import { icon } from '../icons';
 import type { IconName } from '../icons';
+import { nextReminder } from '../occurrence';
 import { openInCompose } from './compose';
 
 function notFoundView(): View {
@@ -96,20 +97,24 @@ export function resultView(ctx: AppContext, id: string): View {
   if (!msg) return notFoundView();
   const notice = ctx.notice?.id === id ? ctx.notice : null;
   ctx.notice = null;
+  // Every reminder has gone off: adding it to a calendar now would never notify, so offer a fresh copy instead.
+  const passed = nextReminder(msg, new Date()) === null;
 
   const event = eventFor(msg);
   const waLink = event.url;
   const icsUrl = URL.createObjectURL(new Blob([buildIcs(event)], { type: 'text/calendar;charset=utf-8' }));
 
-  const heading = h('h1', { tabindex: -1 }, 'Add it to your calendar');
+  const heading = h('h1', { tabindex: -1 }, passed ? 'This reminder has already passed' : 'Add it to your calendar');
 
-  // Summary
+  // Summary. Times are the ones on the clock: a time skipped by a DST change is shown as the time actually used,
+  // as the note in the form says ("02:30 doesn't exist …; 03:30 is used instead").
   const reminderAt = utcToZoned(firstReminderAt(msg), msg.timeZone);
+  const messageAt = utcToZoned(zonedTimeToUtc(event.start, msg.timeZone), msg.timeZone);
   const otherZone = msg.timeZone !== getDeviceTimeZone() ? ` (${msg.timeZone})` : '';
   const reminderDetail =
     msg.reminderMinutesBefore === 0
       ? 'At the time of the message'
-      : `${reminderLabel(msg.reminderMinutesBefore)} the message at ${timeLabel(event.start.time)}`;
+      : `${reminderLabel(msg.reminderMinutesBefore)} the message at ${timeLabel(messageAt.time)}`;
   const messageId = uid('message');
   const messageText = h('p', { class: 'message-text clamp', dir: 'auto', id: messageId }, msg.message);
   const showMore = h(
@@ -134,7 +139,7 @@ export function resultView(ctx: AppContext, id: string): View {
         name ? h('span', { class: 'strong block' }, h('span', { dir: 'auto' }, name)) : null,
         h(
           'span',
-          { dir: 'ltr', class: name ? 'muted block' : 'strong block' },
+          { dir: 'ltr', class: name ? 'muted block phone' : 'strong block phone' },
           formatPhoneForDisplay(msg.recipient.phone),
         ),
         notice?.phoneWarning
@@ -155,7 +160,8 @@ export function resultView(ctx: AppContext, id: string): View {
         h('span', { class: 'muted block' }, reminderDetail),
       ),
       summaryRow('Repeat', describeRecurrence(msg.recurrence, event.start.date)),
-      summaryRow('Message', messageText, showMore),
+      // The box carries the padding, so the clamped text inside shows no sliver of a 7th line.
+      summaryRow('Message', h('div', { class: 'message-box' }, messageText), showMore),
     ),
   );
 
@@ -238,8 +244,10 @@ export function resultView(ctx: AppContext, id: string): View {
     h('div', { class: 'button-row' }, copyButton, shareButton),
   );
 
+  // The general "very long message" warning is already covered by the Google one above when the link doesn't fit.
+  const shown = (notice?.warnings ?? []).filter((w) => googleFits || w.field !== 'message');
   const warnings =
-    notice && notice.warnings.length > 0
+    shown.length > 0
       ? h(
           'div',
           { class: 'notice', role: 'note' },
@@ -247,45 +255,81 @@ export function resultView(ctx: AppContext, id: string): View {
           h(
             'div',
             null,
-            notice.warnings.map((w) => h('p', null, w)),
+            shown.map((w) => h('p', null, w.message)),
           ),
         )
       : null;
 
-  const element = h(
-    'div',
-    { class: 'view' },
+  const editCopy = (primary: boolean): HTMLElement =>
     h(
-      'div',
-      { class: 'hero' },
-      h('span', { class: 'hero-icon' }, icon('checkCircle', 30)),
-      h('p', { class: 'eyebrow' }, 'Saved on this device'),
-      heading,
-      h(
-        'p',
-        { class: 'lead' },
-        'Your calendar does the reminding. When it goes off, tap the link in the event and press send in WhatsApp.',
-      ),
-    ),
-    warnings,
-    actions,
-    summary,
-    linkCard,
-    h(
-      'div',
-      { class: 'button-row footer-actions' },
-      h('a', { class: 'btn btn-secondary', href: '#/' }, icon('add'), 'Schedule another'),
-      h(
-        'button',
-        { type: 'button', class: 'btn btn-secondary', onClick: () => openInCompose(ctx, msg) },
-        icon('edit'),
-        'Edit a copy',
-      ),
-    ),
-  );
+      'button',
+      {
+        type: 'button',
+        class: primary ? 'btn btn-primary btn-block btn-large' : 'btn btn-secondary',
+        onClick: () => void openInCompose(ctx, msg),
+      },
+      icon('edit'),
+      'Edit a copy',
+    );
+
+  const hero = passed
+    ? h(
+        'div',
+        { class: 'hero' },
+        h('span', { class: 'hero-icon is-muted' }, icon('clock', 30)),
+        h('p', { class: 'eyebrow' }, 'Saved on this device'),
+        heading,
+        h(
+          'p',
+          { class: 'lead' },
+          "Adding it to a calendar now wouldn't remind you. Edit a copy to schedule it again, or use the WhatsApp link below to send the message yourself.",
+        ),
+      )
+    : h(
+        'div',
+        { class: 'hero' },
+        h('span', { class: 'hero-icon' }, icon('checkCircle', 30)),
+        h('p', { class: 'eyebrow' }, 'Saved on this device'),
+        heading,
+        h(
+          'p',
+          { class: 'lead' },
+          'Your calendar does the reminding. When it goes off, tap the link in the event and press send in WhatsApp.',
+        ),
+      );
+
+  const element = passed
+    ? h(
+        'div',
+        { class: 'view' },
+        hero,
+        h('div', { class: 'passed-actions' }, editCopy(true)),
+        summary,
+        linkCard,
+        h(
+          'div',
+          { class: 'button-row footer-actions' },
+          h('a', { class: 'btn btn-secondary', href: '#/' }, icon('add'), 'Schedule another'),
+        ),
+      )
+    : h(
+        'div',
+        { class: 'view' },
+        hero,
+        warnings,
+        actions,
+        summary,
+        linkCard,
+        h(
+          'div',
+          { class: 'button-row footer-actions' },
+          h('a', { class: 'btn btn-secondary', href: '#/' }, icon('add'), 'Schedule another'),
+          editCopy(false),
+        ),
+      );
 
   return {
-    title: 'Add to calendar',
+    title: passed ? 'Reminder passed' : 'Add to calendar',
     element,
     heading,
     mounted() {

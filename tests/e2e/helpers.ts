@@ -45,6 +45,13 @@ export async function setWhen(page: Page, date: string, time: string): Promise<v
   await timeInput(page).fill(time);
 }
 
+/** The compose form's "Clear" button, confirming in the dialog it opens when a message is written. */
+export async function clearForm(page: Page): Promise<void> {
+  const hasMessage = (await messageBox(page).inputValue()).trim() !== '';
+  await page.getByRole('button', { name: 'Clear form' }).click();
+  if (hasMessage) await page.getByRole('dialog', { name: 'Clear the form?' }).getByRole('button', { name: 'Clear form' }).click();
+}
+
 /** A one-off reminder without a fixed recipient; ends on the result page. */
 export async function createReminder(page: Page, message: string, time = '09:30'): Promise<void> {
   await page.goto('./');
