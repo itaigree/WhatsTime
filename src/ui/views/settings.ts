@@ -1,5 +1,6 @@
 /** '#/settings' — defaults, the scheduled list, how it works and privacy. */
 
+import { isGoogleCalendarId } from '../../core/storage';
 import type { Settings } from '../../core/types';
 import { confirmDialog } from '../components/confirm';
 import { field, selectControl } from '../components/field';
@@ -37,6 +38,38 @@ export function settingsView(ctx: AppContext): View {
     String(ctx.settings.defaultDurationMinutes),
     { onChange: () => save({ defaultDurationMinutes: Number(durationSelect.value) }) },
   );
+
+  const calendarInput = h('input', {
+    type: 'text',
+    inputmode: 'email',
+    autocomplete: 'off',
+    autocapitalize: 'off',
+    spellcheck: 'false',
+    dir: 'ltr',
+    placeholder: '…@group.calendar.google.com',
+    value: ctx.settings.googleCalendarId ?? '',
+  });
+  const calendarField = field({
+    label: 'Google calendar',
+    control: calendarInput,
+    hint: [
+      "Optional. Paste a calendar's ID (Google Calendar on a computer: the calendar's Settings, then Integrate calendar) ",
+      'and "Add to Google Calendar" will choose that calendar. Give it a default notification of 0 minutes and every ',
+      'reminder gets it automatically.',
+    ],
+  });
+  calendarInput.addEventListener('change', () => {
+    const value = calendarInput.value.trim();
+    if (value && !isGoogleCalendarId(value)) {
+      calendarField.error.show('That does not look like a calendar ID. It ends with @group.calendar.google.com or is an email address.', [calendarInput]);
+      return;
+    }
+    calendarField.error.clear();
+    calendarInput.value = value;
+    const { googleCalendarId: _previous, ...rest } = ctx.settings;
+    ctx.saveSettings(value ? { ...rest, googleCalendarId: value } : rest);
+    ctx.announce(value ? 'Saved' : 'Using your default Google calendar');
+  });
 
   const historyCount = h('p', { class: 'muted' });
   const clearButton = h(
@@ -121,6 +154,7 @@ export function settingsView(ctx: AppContext): View {
         }).element,
         field({ label: 'Default reminder', control: reminderSelect }).element,
         field({ label: 'Event length', control: durationSelect, hint: 'How long the calendar event lasts.' }).element,
+        calendarField.element,
       ),
     ).element,
     historyCard.element,

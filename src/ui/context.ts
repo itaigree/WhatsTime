@@ -76,6 +76,7 @@ export function initialSettings(store: AppStore): Settings {
       stored.defaultReminderMinutesBefore >= 0 ? stored.defaultReminderMinutesBefore : detected.defaultReminderMinutesBefore,
     defaultDurationMinutes:
       stored.defaultDurationMinutes >= 1 ? stored.defaultDurationMinutes : detected.defaultDurationMinutes,
+    ...(stored.googleCalendarId ? { googleCalendarId: stored.googleCalendarId } : {}),
   };
   const complete =
     stored.defaultCountry !== '' && stored.defaultReminderMinutesBefore >= 0 && stored.defaultDurationMinutes >= 1;

@@ -114,6 +114,11 @@ export interface Settings {
   defaultCountry: string;
   defaultReminderMinutesBefore: number;
   defaultDurationMinutes: number;
+  /**
+   * Google Calendar to preselect in "Add to Google Calendar" links (the calendar's ID, e.g.
+   * '...@group.calendar.google.com'). Unset means Google's default calendar.
+   */
+  googleCalendarId?: string;
 }
 
 export interface SavedContact {

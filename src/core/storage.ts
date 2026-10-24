@@ -257,9 +257,16 @@ function orderContacts(items: SavedContact[]): SavedContact[] {
   return uniqueBy(newestFirst(items, (c) => c.lastUsed), (c) => c.phone).slice(0, CONTACTS_CAP);
 }
 
+/** A Google Calendar ID looks like an email address ('primary' is not useful here). */
+export function isGoogleCalendarId(v: unknown): v is string {
+  return isString(v) && v.length <= 256 && /^[^\s@/?#&]+@[^\s@/?#&]+\.[^\s@/?#&]+$/.test(v);
+}
+
 function sanitizeSettings(v: unknown, defaults: Settings): Settings {
   const s = isRecord(v) ? v : {};
+  const calendarId = isGoogleCalendarId(s.googleCalendarId) ? s.googleCalendarId : defaults.googleCalendarId;
   return {
+    ...(calendarId ? { googleCalendarId: calendarId } : {}),
     defaultCountry: isCountry(s.defaultCountry) ? s.defaultCountry : defaults.defaultCountry,
     defaultReminderMinutesBefore: isReminder(s.defaultReminderMinutesBefore)
       ? s.defaultReminderMinutesBefore
@@ -311,8 +318,13 @@ export function createStore(backend: KeyValueStore | null, onWriteError?: (error
 
   return {
     loadSettings: (defaults) => sanitizeSettings(read(KEYS.settings), defaults),
-    saveSettings: ({ defaultCountry, defaultReminderMinutesBefore, defaultDurationMinutes }) =>
-      write(KEYS.settings, { defaultCountry, defaultReminderMinutesBefore, defaultDurationMinutes }),
+    saveSettings: ({ defaultCountry, defaultReminderMinutesBefore, defaultDurationMinutes, googleCalendarId }) =>
+      write(KEYS.settings, {
+        defaultCountry,
+        defaultReminderMinutesBefore,
+        defaultDurationMinutes,
+        ...(isGoogleCalendarId(googleCalendarId) ? { googleCalendarId } : {}),
+      }),
     listHistory,
     saveToHistory(message) {
       const clean = sanitizeMessage(message);

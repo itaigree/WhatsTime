@@ -37,8 +37,11 @@ function summaryRow(term: string, ...details: Child[]): HTMLElement[] {
 }
 
 /** Google's template link can't carry the reminder, so say which notification to pick (in Google's words). */
-function googleNote(msg: ScheduledMessage): string {
+function googleNote(msg: ScheduledMessage, chosenCalendar: boolean): string {
   const filled = msg.recurrence.frequency === 'none' ? 'the message and time' : 'the message, time and repeat';
+  if (chosenCalendar) {
+    return `Opens Google Calendar with ${filled} filled in, in your chosen calendar. Its default notification is used, so set that calendar's notifications to '${msg.reminderMinutesBefore === 0 ? 'At time of event' : reminderLabel(msg.reminderMinutesBefore)}' once in Google Calendar's settings.`;
+  }
   const wanted = msg.reminderMinutesBefore === 0 ? 'At time of event' : reminderLabel(msg.reminderMinutesBefore);
   return `Opens Google Calendar with ${filled} filled in. Google can't take the reminder from a link: before you tap Save, set the notification to '${wanted}'.`;
 }
@@ -205,7 +208,7 @@ export function resultView(ctx: AppContext, id: string): View {
       : null;
 
   // Even with the description shortened, a long message can leave the link too long for Google to open.
-  const googleUrl = buildGoogleCalendarUrl(event);
+  const googleUrl = buildGoogleCalendarUrl(event, ctx.settings.googleCalendarId);
   const googleFits = googleUrl.length <= GOOGLE_CALENDAR_URL_MAX_LENGTH;
   const actions = h(
     'section',
@@ -213,7 +216,7 @@ export function resultView(ctx: AppContext, id: string): View {
     googleFits
       ? action(
           actionLink(googleUrl, 'calendar', 'Add to Google Calendar', true, { target: '_blank', rel: 'noopener' }),
-          googleNote(msg),
+          googleNote(msg, Boolean(ctx.settings.googleCalendarId)),
         )
       : h(
           'p',
