@@ -5,6 +5,7 @@ import {
   HISTORY_CAP,
   KEY_PREFIX,
   createStore,
+  isGoogleCalendarId,
   newId,
   sanitizeMessage,
   sanitizeRecurrence,
@@ -785,5 +786,25 @@ describe('draft pending recipient', () => {
     }
     backend.setItem('whatstime:v1:draft', JSON.stringify({ message: 'm', pendingRecipient: { name: 'x', phones: ['1', 2, '3'], source: 'typed' } }));
     expect(store.loadDraft()?.pendingRecipient?.phones).toEqual(['1', '3']);
+  });
+});
+
+describe('google calendar setting', () => {
+  const defaults = { defaultCountry: 'IL', defaultReminderMinutesBefore: 0, defaultDurationMinutes: 15 };
+  function memory(): KeyValueStore {
+    const data = new Map<string, string>();
+    return { getItem: (k) => data.get(k) ?? null, setItem: (k, v) => void data.set(k, v), removeItem: (k) => void data.delete(k) };
+  }
+
+  it('round-trips a calendar ID and drops malformed ones', () => {
+    const store = createStore(memory());
+    const id = 'abc123@group.calendar.google.com';
+    store.saveSettings({ ...defaults, googleCalendarId: id });
+    expect(store.loadSettings(defaults)).toEqual({ ...defaults, googleCalendarId: id });
+    for (const bad of ['', 'not an id', 'a@b', 'x@y.com&src=evil', 'https://calendar.google.com']) {
+      store.saveSettings({ ...defaults, googleCalendarId: bad });
+      expect(store.loadSettings(defaults)).toEqual(defaults);
+    }
+    expect(isGoogleCalendarId('me@gmail.com')).toBe(true);
   });
 });

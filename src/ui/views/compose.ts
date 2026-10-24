@@ -217,7 +217,7 @@ export function composeView(ctx: AppContext): View {
 
   function tooLongForGoogle(msg: ScheduledMessage, now: Date): boolean {
     try {
-      return buildGoogleCalendarUrl(toCalendarEvent(msg, now)).length > GOOGLE_CALENDAR_URL_MAX_LENGTH;
+      return buildGoogleCalendarUrl(toCalendarEvent(msg, now), settings.googleCalendarId).length > GOOGLE_CALENDAR_URL_MAX_LENGTH;
     } catch {
       return false;
     }

@@ -231,3 +231,14 @@ describe('isUtcZone', () => {
     },
   );
 });
+
+describe('chosen calendar', () => {
+  const ID = 'd160f7f34387f5fe047406dbe1d1d421c5589e3e9dee333d7626d08d68b0008e@group.calendar.google.com';
+
+  it('adds src only when a calendar is chosen, before details', () => {
+    expect(new URL(buildGoogleCalendarUrl(makeEvent())).searchParams.has('src')).toBe(false);
+    const url = new URL(buildGoogleCalendarUrl(makeEvent({ rrule: 'FREQ=DAILY' }), ID));
+    expect(url.searchParams.get('src')).toBe(ID);
+    expect([...url.searchParams.keys()]).toEqual(['action', 'text', 'dates', 'ctz', 'crm', 'trp', 'src', 'details', 'recur']);
+  });
+});
