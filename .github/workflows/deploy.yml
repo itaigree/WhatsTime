@@ -54,7 +54,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       # Reads the Pages settings, which needs the Pages scope; it fails early if Pages is not set to GitHub Actions.
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
 
       - name: Deploy
         id: deployment
